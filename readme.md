@@ -1,106 +1,54 @@
-# Omnichain
+# SolSlot CCIP-to-Warp Omnichain
 
-Omnichain is a Solidity-based system for cross‑chain value flows composed of two contracts: EscrowVault, which escrows USDC and bridges intent via a Warp Portal, and NftRedemption, which settles ERC‑20 rewards based on off‑chain EIP‑712 attestations. EscrowVault locks funds, pays a message toll, and emits a canonical payload to a destination chain; a verified return message finalizes with either a payout to a fixed recipient or a refund. NftRedemption verifies attestor signatures, enforces per‑NFT one‑time redemption, and transfers rewards to the signed EVM recipient.
+SolSlot keeps settlement tokens on each origin chain while Chainlink CCIP carries payment messages to a Base Warp gateway, preserving the existing Warp → Samuel → KoS → Warp result path.
 
-## Features
+## Architecture
 
-- EscrowVault: Deterministic USDC escrow keyed by paymentId; records collectionId, quantity, offerId, and three Chia puzzle hashes (bridgingPuzzle, trustedPuzzle, destinationPuzzle).
-- Bridging mechanics: Queries IPortal.messageToll(), pays the exact toll, then calls IPortal.sendMessage(sourceChain, bridgingPuzzle, contents) with contents = [paymentId, amountUSDC, quantity, collectionId, offerId, destinationPuzzle].
-- Finalization: receiveMessage enforces msg.sender == warpPortal, source_chain == configured sourceChain, nonce anti‑replay, _source == trustedPuzzle, and remoteAmount ≤ escrowed amount; routes funds to payoutAddress on pass, or refunds depositor on fail.
-- Admin/Emergency (EscrowVault): pause/unpause, setSourceChain, and owner setPayout(paymentId, recipient) to resolve stuck escrows.
-- NftRedemption: EIP‑712 domain "Solslot‑Redemption" v1; verifies attestor signature over {poolId, evmAddress, blsPubkey, nftSetHash, pricingHash, nftCount, totalReward, issuedAt, nonce}; prevents replay via nonce and per‑NFT redeemed flags.
-- Integrity and payout (NftRedemption): Requires strictly ascending nftIds and nftSetHash = keccak256(lowerhex(ids joined by "\n")); optional maxClaimAge; payouts via SafeERC20 to the signed evmAddress.
-- Security: Uses OpenZeppelin Ownable, Pausable, ReentrancyGuard, and SafeERC20 where applicable.
+- `OmnichainEscrowSpoke` is deployed once per enabled EVM network. It accepts only its immutable six-decimal USDC and USDT contracts, records the selected token per deposit, authenticates the result, and pays or refunds that exact token.
+- `SolomonWarpGateway` is deployed on Base and Ethereum. Base is primary; Ethereum remains disabled until a controlled failover. Gateway callbacks queue work, while separate permissionless calls pay Warp/CCIP fees and retry forwarding.
+- Protocol V2 derives a globally unique payment ID from protocol version, origin selector, origin spoke, settlement-token address, and local payment ID.
+- The Samuel/KoS request is ten words: `[globalPaymentId, purchaseId, artifactHash, amount, quantity, collectionId, deedLauncherId, vaultLauncherId, destinationPuzzle, quoteExpiresAt]`. Samuel verifies every word against the coordinator's persisted purchase artifact before asking KoS to reserve or deliver a deed. The Warp result remains `[globalPaymentId, amount, passFail]`.
+- CCIP transfers no tokens. USDC or USDT remains on the origin spoke throughout processing.
 
+## V1 networks
 
-## Repository Structure
+Ethereum, Base, Polygon, Optimism, Avalanche, and Robinhood Chain are represented in `config/networks.json`. Robinhood remains disabled until reviewed six-decimal USDC and USDT contracts and a deployed spoke are configured. Aztec and Tron are not supported in V1.
 
-- contracts/ — Solidity contracts (EscrowVault, NftRedemption)
-- scripts/ — Hardhat scripts (deployment, utilities, and demos)
-- test/ — Hardhat tests
+Router addresses and selectors are pinned from the official Chainlink CCIP directory. `scripts/check-network.js` verifies the RPC chain, router bytecode, and selected hub lane before deployment.
 
-- hardhat.config.js — Hardhat configuration
-- package.json — Project metadata and dev dependencies
-- .env.example — Sample environment file (do not commit real secrets)
-- readme.md — This guide
+## Development
 
-Common build artifacts (artifacts/, cache/, node_modules/, logs) are ignored by default.
+```bash
+npm install
+npm run build
+npm test
+```
 
-## Prerequisites
+Deterministic tests cover local and remote routes, exact success/refund settlement, spoofed CCIP sources, Warp authentication, replay protection, amount mismatch, fee caps, global-ID separation, and delayed emergency refunds. The legacy live-network script is intentionally excluded from `npm test`.
 
-- Node.js 18+ and npm
-- Git
-- A public RPC endpoint for your target network (e.g., Base)
-- A funded wallet (for deployment and on‑chain interactions)
+## Deployment
 
+Copy `.env.example` to `.env`, supply only reviewed values, then validate and deploy:
 
-## Setup
+```bash
+npm run check:network -- --network baseSepolia
+npm run deploy -- --network baseSepolia
+npm run configure:gateway -- --network baseSepolia
+```
 
-1) Clone and install dependencies
+The deployment script rejects missing/placeholder addresses, verifies RPC chain identity and router bytecode, optionally verifies source, and starts two-step ownership transfer to `GOVERNANCE_ADDRESS`. Governance must be an audited timelock controlled by a multisig and must accept ownership before operations begin.
 
-    git clone https://github.com/your-org/omnichain.git
-    cd omnichain
-    npm install
-
-2) Copy the example environment file and fill in values
-
-    cp .env.example .env
-    # Edit .env with your keys and addresses
-
-
-
-## Quick Start (Contracts)
-
-1) Compile
-
-    npx hardhat compile
-
-2) Run tests (if any)
-
-    npx hardhat test
-
-3) Deploy (example: using the baseMainnet network from hardhat.config.js)
-
-    npx hardhat run scripts/deploy.js --network baseMainnet
-
-Adjust the network flag to match your configuration.
-
-## Environment Variables
-
-Create a .env in the project root (never commit secrets). See .env.example for a full, documented template. Common variables:
-
-- BASE_MAINNET_RPC_URL — HTTPS RPC for Hardhat tasks and scripts
-- MNEMONIC — 12/24‑word seed for deploying and scripts (dev or throwaway recommended)
-- PRIVATE_KEY — Alternative to MNEMONIC (use one or the other)
-
-
-
-Tip: Keep addresses consistent with the network your RPC points to.
-
-## Deploy Instructions (Typical Flow)
-
-1) Configure your .env for the chosen network (RPC + MNEMONIC/PRIVATE_KEY).
-2) Compile the contracts:
-
-    npx hardhat compile
-
-3) Deploy using your preferred script:
-
-    npx hardhat run scripts/deploy.js --network baseMainnet
-
-4) Note the deployed addresses and update your .env (e.g., ESCROW_CONTRACT).
-
-5) Interact via scripts or Hardhat tasks as needed.
-
-
+Deploy Base gateway/spoke first, configure every spoke allowlist in both directions, run testnet end-to-end payments, and only then deploy the disabled Ethereum failover gateway. Existing payments never change hubs.
 
 ## Security
 
-- Never commit secrets. Only commit .env.example.
-- Use distinct keys for development vs. production and rotate regularly.
-- Verify contract code, dependencies, and addresses before deploying to mainnets.
-- Consider audits and thorough testing before production use.
+- CCIP callbacks require the official router plus the exact source selector and allowlisted sender.
+- Warp results require the exact portal, `xch` source, Samuel return puzzle, unused nonce, global payment ID, exact amount, and boolean result.
+- Settlement is one-way and idempotent. Partial payouts and arbitrary administrator recipients are removed.
+- Emergency resolution has a minimum seven-day delay and can refund only the original depositor.
+- Hub native-fee spending is capped per message, and fee shortages leave retryable queued state.
+- Contracts are non-upgradeable and versioned.
 
-## License
+Review `security/THREAT_MODEL.md`, `security/INVARIANTS.md`, `security/DEPLOYMENT_RUNBOOK.md`, and `security/AUDIT_SCOPE.md`. An independent external audit is mandatory before accepting mainnet value.
 
-MIT
+`NftRedemption.sol` remains an independent legacy attestation-redemption contract and is not part of the CCIP payment path.

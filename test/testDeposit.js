@@ -152,9 +152,11 @@ async function main() {
     console.log(`Test complete => bridgingPuzzle, trustedPuzzle, destinationPuzzle stored, warp message triggered.`);
 }
 
-main()
-    .then(() => process.exit(0))
-    .catch(err => {
-        console.error("Error in deposit script:", err);
-        process.exit(1);
-    });
+if (require.main === module) {
+    main()
+        .then(() => process.exit(0))
+        .catch(err => {
+            console.error("Error in deposit script:", err);
+            process.exit(1);
+        });
+}
