@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {
+  readEvidence,
   requireNewEvidencePath,
   sha256,
   stableJson,
@@ -37,5 +38,16 @@ describe("Omnichain deployment evidence", function () {
     fs.writeFileSync(output, "existing", "utf8");
     expect(() => requireNewEvidencePath(output)).to.throw("Refusing to overwrite");
     expect(() => requireNewEvidencePath("")).to.throw("DEPLOYMENT_OUTPUT is required");
+  });
+
+  it("rejects a tampered deployment record", function () {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solslot-omnichain-"));
+    const output = path.join(directory, "evidence.json");
+    const record = withArtifactHash({ schemaVersion: 1, sourceSha: "a".repeat(40) });
+    writeEvidence(output, record);
+    expect(readEvidence(output)).to.deep.equal(record);
+    record.sourceSha = "b".repeat(40);
+    fs.writeFileSync(output, JSON.stringify(record), "utf8");
+    expect(() => readEvidence(output)).to.throw("evidence hash mismatches");
   });
 });

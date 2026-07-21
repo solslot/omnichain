@@ -46,7 +46,19 @@ non-overwritable, owner-only JSON record containing the source SHA, chain and
 token configuration, deployment receipts, ownership-handoff state, and runtime
 code hashes. The coordinator must not enable an external-payment rail until
 governance ownership is accepted and this evidence has been independently
-reviewed.
+reviewed. After the governance timelock accepts both contract transfers, run:
+
+```bash
+SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH=/secure/omnichain/deployment.json \
+SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_OUTPUT=/secure/omnichain/activation.json \
+SOLSLOT_OMNICHAIN_GATEWAY_PROFILE=bse \
+GOVERNANCE_ADDRESS=0x... \
+npm run attest:activation -- --network baseSepolia
+```
+
+The activation attestation re-reads the live `owner()` and runtime bytecode of
+the gateway and spoke, binds both to the immutable deployment artifact, and
+refuses pending or mismatched ownership. It is also non-overwritable.
 
 Deploy Base gateway/spoke first, configure every spoke allowlist in both directions, run testnet end-to-end payments, and only then deploy the disabled Ethereum failover gateway. Existing payments never change hubs.
 

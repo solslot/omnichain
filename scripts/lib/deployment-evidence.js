@@ -4,6 +4,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const GIT_SHA = /^[0-9a-f]{40}$/;
+const MAX_EVIDENCE_BYTES = 128 * 1024;
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -64,6 +65,26 @@ function writeEvidence(outputPath, evidence) {
   return resolved;
 }
 
+function readEvidence(inputPath, label = "deployment") {
+  if (!inputPath) throw new Error(`SOLSLOT_OMNICHAIN_${label.toUpperCase()}_EVIDENCE_PATH is required`);
+  const resolved = path.resolve(inputPath);
+  const stat = fs.lstatSync(resolved);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > MAX_EVIDENCE_BYTES) {
+    throw new Error(`${label} evidence path is invalid`);
+  }
+  const record = JSON.parse(fs.readFileSync(resolved, "utf8"));
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new Error(`${label} evidence must be an object`);
+  }
+  const artifactHash = record.artifactHash;
+  if (typeof artifactHash !== "string" || artifactHash !== sha256(Object.fromEntries(
+    Object.entries(record).filter(([key]) => key !== "artifactHash"),
+  ))) {
+    throw new Error(`${label} evidence hash mismatches`);
+  }
+  return record;
+}
+
 function withArtifactHash(evidence) {
   return { ...evidence, artifactHash: sha256(evidence) };
 }
@@ -71,6 +92,7 @@ function withArtifactHash(evidence) {
 module.exports = {
   requireNewEvidencePath,
   requiredSourceSha,
+  readEvidence,
   sha256,
   stableJson,
   withArtifactHash,
