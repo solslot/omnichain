@@ -36,7 +36,17 @@ npm run deploy -- --network baseSepolia
 npm run configure:gateway -- --network baseSepolia
 ```
 
-The deployment script rejects missing/placeholder addresses, verifies RPC chain identity and router bytecode, optionally verifies source, and starts two-step ownership transfer to `GOVERNANCE_ADDRESS`. Governance must be an audited timelock controlled by a multisig and must accept ownership before operations begin.
+The deployment script rejects missing/placeholder addresses, verifies RPC chain identity and router bytecode, and starts two-step ownership transfer to `GOVERNANCE_ADDRESS`. Governance must be an audited timelock controlled by a multisig and must accept ownership before operations begin.
+
+Every deployment also requires `SOLSLOT_OMNICHAIN_SOURCE_SHA` to match a clean
+checkout, `SOLSLOT_OMNICHAIN_CONFIRMATIONS` of at least 12 outside Hardhat,
+and a new `SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT` path. The path is validated
+before any transaction is sent. The script writes a
+non-overwritable, owner-only JSON record containing the source SHA, chain and
+token configuration, deployment receipts, ownership-handoff state, and runtime
+code hashes. The coordinator must not enable an external-payment rail until
+governance ownership is accepted and this evidence has been independently
+reviewed.
 
 Deploy Base gateway/spoke first, configure every spoke allowlist in both directions, run testnet end-to-end payments, and only then deploy the disabled Ethereum failover gateway. Existing payments never change hubs.
 
