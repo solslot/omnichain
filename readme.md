@@ -60,6 +60,26 @@ The activation attestation re-reads the live `owner()` and runtime bytecode of
 the gateway and spoke, binds both to the immutable deployment artifact, and
 refuses pending or mismatched ownership. It is also non-overwritable.
 
+Run the read-only escrow event relayer as a separate service after activation:
+
+```bash
+SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_PATH=/secure/omnichain/activation.json \
+SOLSLOT_ESCROW_CALLBACK_URL=https://staging.solslot.com/protocol/purchase-intents/escrow-webhook \
+SOLSLOT_ESCROW_CALLBACK_TOKEN=... \
+SOLSLOT_ESCROW_RELAYER_STATE_PATH=/var/lib/solslot/escrow-relayer.json \
+SOLSLOT_ESCROW_START_BLOCK=... \
+SOLSLOT_ESCROW_CONFIRMATIONS=12 \
+npm run relay:escrow -- --network baseSepolia
+```
+
+The relayer has no signer and never settles funds. It verifies the RPC chain,
+activation-bound spoke bytecode, and at least 12 confirmations; reads the full
+deposit struct for each `PaymentDeposited` log; submits the exact ten-word
+message and block provenance to the authenticated backend callback; and then
+advances an owner-only local checkpoint. A failed callback leaves the block
+uncheckpointed for an idempotent retry. The callback token is a backend secret
+and must not enter a browser bundle or shell history.
+
 Deploy Base gateway/spoke first, configure every spoke allowlist in both directions, run testnet end-to-end payments, and only then deploy the disabled Ethereum failover gateway. Existing payments never change hubs.
 
 ## Security
