@@ -9,10 +9,11 @@ const {
 const {
   assertChain,
   currentNetworkConfig,
-  requiredAddress,
-  requiredBytes,
-  requiredUint,
 } = require("./lib/config");
+const {
+  deploymentSettings,
+  inspectDeploymentReadiness,
+} = require("./lib/deployment-preflight");
 
 async function verify(address, constructorArguments) {
   if (process.env.VERIFY_CONTRACTS !== "true") return;
@@ -42,24 +43,23 @@ async function main() {
   await assertChain(config);
   const [deployer] = await ethers.getSigners();
   if (!deployer) throw new Error("DEPLOYER_PRIVATE_KEY is required");
-
-  const payout = requiredAddress("PAYOUT_ADDRESS");
-  const usdc = requiredAddress("USDC_ADDRESS", config.stablecoins?.usdc);
-  const usdt = requiredAddress("USDT_ADDRESS", config.stablecoins?.usdt);
-  if (usdc.toLowerCase() === usdt.toLowerCase()) throw new Error("USDC_ADDRESS and USDT_ADDRESS must differ");
-  const callbackGas = requiredUint("CCIP_CALLBACK_GAS", "500000");
-  const emergencyDelay = requiredUint("EMERGENCY_REFUND_DELAY_SECONDS", "604800");
-  const governance = requiredAddress("GOVERNANCE_ADDRESS");
-  const deployGateway = process.env.DEPLOY_GATEWAY === "true";
-  const confirmations = network.name === "hardhat"
-    ? 1
-    : Number(requiredUint("SOLSLOT_OMNICHAIN_CONFIRMATIONS", "12"));
-  if (!Number.isSafeInteger(confirmations) || confirmations < 1) {
-    throw new Error("SOLSLOT_OMNICHAIN_CONFIRMATIONS must be a positive integer");
-  }
-  if (network.name !== "hardhat" && confirmations < 12) {
-    throw new Error("SOLSLOT_OMNICHAIN_CONFIRMATIONS must be at least 12 outside Hardhat");
-  }
+  const settings = deploymentSettings(process.env, config, network.name, networks);
+  await inspectDeploymentReadiness({
+    provider: ethers.provider,
+    config,
+    settings,
+    deployer: await deployer.getAddress(),
+  });
+  const {
+    payout,
+    usdc,
+    usdt,
+    governance,
+    callbackGas,
+    emergencyDelay,
+    confirmations,
+    deployGateway,
+  } = settings;
   let gatewayAddress;
   let gatewayDeployment = null;
 
@@ -70,13 +70,13 @@ async function main() {
     const gatewayArgs = [
       config.router,
       BigInt(config.selector),
-      requiredAddress("WARP_PORTAL_ADDRESS"),
-      requiredBytes("WARP_CHIA_CHAIN", 3),
-      requiredBytes("SAMUEL_BRIDGING_PUZZLE", 32),
-      requiredBytes("SAMUEL_RETURN_PUZZLE", 32),
+      settings.gatewaySettings.warpPortal,
+      settings.gatewaySettings.warpChiaChain,
+      settings.gatewaySettings.samuelBridgingPuzzle,
+      settings.gatewaySettings.samuelReturnPuzzle,
       callbackGas,
-      requiredUint("MAX_WARP_TOLL_WEI"),
-      requiredUint("MAX_CCIP_FEE_WEI"),
+      settings.gatewaySettings.maxWarpTollWei,
+      settings.gatewaySettings.maxCcipFeeWei,
     ];
     const gateway = await ethers.deployContract("SolomonWarpGateway", gatewayArgs);
     await gateway.waitForDeployment();
@@ -85,24 +85,10 @@ async function main() {
     await verify(gatewayAddress, gatewayArgs);
     await (await gateway.transferOwnership(governance)).wait();
   } else {
-    gatewayAddress = requiredAddress("HUB_GATEWAY_ADDRESS");
+    gatewayAddress = settings.gateway;
   }
 
-  const isTestnet = [
-    "baseSepolia",
-    "ethereumSepolia",
-    "polygonAmoy",
-    "optimismSepolia",
-    "avalancheFuji",
-    "robinhoodTestnet",
-  ].includes(network.name);
-  const defaultHubName = config.hub === "ethereum"
-    ? (isTestnet ? "ethereumSepolia" : "ethereumMainnet")
-    : (isTestnet ? "baseSepolia" : "baseMainnet");
-  const hubSelector = BigInt(
-    process.env.HUB_CHAIN_SELECTOR || networks[defaultHubName].selector,
-  );
-  if (hubSelector === 0n) throw new Error("HUB_CHAIN_SELECTOR must be non-zero");
+  const hubSelector = settings.hubChainSelector;
   const spokeArgs = [
     config.router,
     BigInt(config.selector),

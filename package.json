@@ -13,6 +13,7 @@
     "test": "hardhat test test/*.test.js",
     "test:coverage": "hardhat coverage",
     "deploy": "hardhat run scripts/deploy-omnichain.js",
+    "preflight:testnet": "hardhat run scripts/preflight-testnet-deployment.js",
     "attest:activation": "hardhat run scripts/attest-omnichain-activation.js",
     "relay:escrow": "hardhat run scripts/relay-escrow-deposits.js",
     "rehearse:escrow": "hardhat run scripts/rehearse-escrow-settlement.js",

@@ -32,8 +32,25 @@ Copy `.env.example` to `.env`, supply only reviewed values, then validate and de
 
 ```bash
 npm run check:network -- --network baseSepolia
+npm run preflight:testnet -- --network baseSepolia
 npm run deploy -- --network baseSepolia
 npm run configure:gateway -- --network baseSepolia
+```
+
+`preflight:testnet` is read-only and deliberately requires
+`SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true`. It checks the pinned source SHA,
+RPC chain/router, deployer balance floor, governance and Warp-portal runtime
+code, both immutable stablecoin runtime contracts and six-decimal interfaces,
+all gateway constructor inputs, the 12-confirmation policy, and a fresh
+owner-only evidence output. It prevents the deployment command from reaching a
+gateway or spoke transaction until those same contract-readiness checks pass.
+
+```bash
+SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true \
+SOLSLOT_OMNICHAIN_SOURCE_SHA=$(git rev-parse HEAD) \
+SOLSLOT_OMNICHAIN_MIN_DEPLOYER_WEI=10000000000000000 \
+SOLSLOT_OMNICHAIN_PREFLIGHT_OUTPUT=/secure/omnichain/base-sepolia-preflight.json \
+npm run preflight:testnet -- --network baseSepolia
 ```
 
 The deployment script rejects missing/placeholder addresses, verifies RPC chain identity and router bytecode, and starts two-step ownership transfer to `GOVERNANCE_ADDRESS`. Governance must be an audited timelock controlled by a multisig and must accept ownership before operations begin.
