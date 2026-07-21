@@ -1,0 +1,133 @@
+{
+  "baseMainnet": {
+    "chainId": 8453,
+    "selector": "15971525489660198786",
+    "router": "0x881e3A65B4d4a04dD529061dd0071cf975F58bCD",
+    "stablecoins": {
+      "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "usdt": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2"
+    },
+    "hub": "base",
+    "enabled": true
+  },
+  "ethereumMainnet": {
+    "chainId": 1,
+    "selector": "5009297550715157269",
+    "router": "0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D",
+    "stablecoins": {
+      "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "usdt": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+    },
+    "hub": "ethereum",
+    "enabled": false
+  },
+  "polygonMainnet": {
+    "chainId": 137,
+    "selector": "4051577828743386545",
+    "router": "0x849c5ED5a80F5B408Dd4969b78c2C8fdf0565Bfe",
+    "stablecoins": {
+      "usdc": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+      "usdt": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
+    },
+    "hub": "base",
+    "enabled": true
+  },
+  "optimismMainnet": {
+    "chainId": 10,
+    "selector": "3734403246176062136",
+    "router": "0x3206695CaE29952f4b0c22a169725a865bc8Ce0f",
+    "stablecoins": {
+      "usdc": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+      "usdt": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58"
+    },
+    "hub": "base",
+    "enabled": true
+  },
+  "avalancheMainnet": {
+    "chainId": 43114,
+    "selector": "6433500567565415381",
+    "router": "0xF4c7E640EdA248ef95972845a62bdC74237805dB",
+    "stablecoins": {
+      "usdc": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+      "usdt": "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7"
+    },
+    "hub": "base",
+    "enabled": true
+  },
+  "robinhoodMainnet": {
+    "chainId": 4663,
+    "selector": "6180753054346818345",
+    "router": "0x06fC836cf9839B1cd891C440A0a45242DA6Ae1c9",
+    "stablecoins": {
+      "usdc": null,
+      "usdt": null
+    },
+    "hub": "base",
+    "enabled": false
+  },
+  "baseSepolia": {
+    "chainId": 84532,
+    "selector": "10344971235874465080",
+    "router": "0xD3b06cEbF099CE7DA4AcCf578aaebFDBd6e88a93",
+    "stablecoins": {
+      "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    },
+    "hub": "base",
+    "enabled": false
+  },
+  "ethereumSepolia": {
+    "chainId": 11155111,
+    "selector": "16015286601757825753",
+    "router": "0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59",
+    "stablecoins": {
+      "usdc": null,
+      "usdt": null
+    },
+    "hub": "ethereum",
+    "enabled": false
+  },
+  "polygonAmoy": {
+    "chainId": 80002,
+    "selector": "16281711391670634445",
+    "router": "0x9C32fCB86BF0f4a1A8921a9Fe46de3198bb884B2",
+    "stablecoins": {
+      "usdc": null,
+      "usdt": null
+    },
+    "hub": "base",
+    "enabled": false
+  },
+  "optimismSepolia": {
+    "chainId": 11155420,
+    "selector": "5224473277236331295",
+    "router": "0x114A20A10b43D4115e5aeef7345a1A71d2a60C57",
+    "stablecoins": {
+      "usdc": null,
+      "usdt": null
+    },
+    "hub": "base",
+    "enabled": false
+  },
+  "avalancheFuji": {
+    "chainId": 43113,
+    "selector": "14767482510784806043",
+    "router": "0xF694E193200268f9a4868e4Aa017A0118C9a8177",
+    "stablecoins": {
+      "usdc": null,
+      "usdt": null
+    },
+    "hub": "base",
+    "enabled": false
+  },
+  "robinhoodTestnet": {
+    "chainId": 46630,
+    "selector": "2032988798112970440",
+    "router": "0x30D197C6F5bE050D5525dD94d01760FaCdB67e7C",
+    "stablecoins": {
+      "usdc": null,
+      "usdt": null
+    },
+    "hub": "base",
+    "enabled": false
+  }
+}

@@ -1,106 +1,174 @@
-# Omnichain
+# SolSlot CCIP-to-Warp Omnichain
 
-Omnichain is a Solidity-based system for cross‑chain value flows composed of two contracts: EscrowVault, which escrows USDC and bridges intent via a Warp Portal, and NftRedemption, which settles ERC‑20 rewards based on off‑chain EIP‑712 attestations. EscrowVault locks funds, pays a message toll, and emits a canonical payload to a destination chain; a verified return message finalizes with either a payout to a fixed recipient or a refund. NftRedemption verifies attestor signatures, enforces per‑NFT one‑time redemption, and transfers rewards to the signed EVM recipient.
+SolSlot keeps settlement tokens on each origin chain while Chainlink CCIP carries payment messages to a Base Warp gateway, preserving the existing Warp -> Samuel -> KoS -> Warp result path.
 
-## Features
+## Architecture
 
-- EscrowVault: Deterministic USDC escrow keyed by paymentId; records collectionId, quantity, offerId, and three Chia puzzle hashes (bridgingPuzzle, trustedPuzzle, destinationPuzzle).
-- Bridging mechanics: Queries IPortal.messageToll(), pays the exact toll, then calls IPortal.sendMessage(sourceChain, bridgingPuzzle, contents) with contents = [paymentId, amountUSDC, quantity, collectionId, offerId, destinationPuzzle].
-- Finalization: receiveMessage enforces msg.sender == warpPortal, source_chain == configured sourceChain, nonce anti‑replay, _source == trustedPuzzle, and remoteAmount ≤ escrowed amount; routes funds to payoutAddress on pass, or refunds depositor on fail.
-- Admin/Emergency (EscrowVault): pause/unpause, setSourceChain, and owner setPayout(paymentId, recipient) to resolve stuck escrows.
-- NftRedemption: EIP‑712 domain "Solslot‑Redemption" v1; verifies attestor signature over {poolId, evmAddress, blsPubkey, nftSetHash, pricingHash, nftCount, totalReward, issuedAt, nonce}; prevents replay via nonce and per‑NFT redeemed flags.
-- Integrity and payout (NftRedemption): Requires strictly ascending nftIds and nftSetHash = keccak256(lowerhex(ids joined by "\n")); optional maxClaimAge; payouts via SafeERC20 to the signed evmAddress.
-- Security: Uses OpenZeppelin Ownable, Pausable, ReentrancyGuard, and SafeERC20 where applicable.
+- The alpha `OmnichainEscrowSpoke` accepts only its immutable six-decimal USDC contract. Base Sepolia is pinned to Circle USDC at `0x036CbD53842c5426634e7929541eC2318f3dCF7e`; no test USDT is accepted or deployed.
+- `SolomonWarpGateway` is deployed on Base and Ethereum. Base is primary; Ethereum remains disabled until a controlled failover. Gateway callbacks queue work, while separate permissionless calls pay Warp/CCIP fees and retry forwarding.
+- Protocol V2 derives a globally unique payment ID from protocol version, origin selector, origin spoke, settlement-token address, and local payment ID.
+- The Samuel/KoS request is ten words: `[globalPaymentId, purchaseId, artifactHash, amount, quantity, collectionId, deedLauncherId, vaultLauncherId, destinationPuzzle, quoteExpiresAt]`. Samuel verifies every word against the coordinator's persisted purchase artifact before asking KoS to reserve or deliver a deed. The Warp result remains `[globalPaymentId, amount, passFail]`.
+- CCIP transfers no tokens. USDC remains on the origin spoke throughout processing.
 
+## Network inventory
 
-## Repository Structure
+The alpha deployment is Base Sepolia only. Other historical profiles remain in
+`config/networks.json` for later review and are not evidence for this rail.
 
-- contracts/ — Solidity contracts (EscrowVault, NftRedemption)
-- scripts/ — Hardhat scripts (deployment, utilities, and demos)
-- test/ — Hardhat tests
+Router addresses and selectors are pinned from the official Chainlink CCIP directory. `scripts/check-network.js` verifies the RPC chain, router bytecode, and selected hub lane before deployment.
 
-- hardhat.config.js — Hardhat configuration
-- package.json — Project metadata and dev dependencies
-- .env.example — Sample environment file (do not commit real secrets)
-- readme.md — This guide
+## Development
 
-Common build artifacts (artifacts/, cache/, node_modules/, logs) are ignored by default.
+```bash
+npm install
+npm run build
+npm test
+```
 
-## Prerequisites
+Deterministic tests cover local and remote routes, exact success/refund settlement, spoofed CCIP sources, Warp authentication, replay protection, amount mismatch, fee caps, global-ID separation, and delayed emergency refunds. The legacy live-network script is intentionally excluded from `npm test`.
 
-- Node.js 18+ and npm
-- Git
-- A public RPC endpoint for your target network (e.g., Base)
-- A funded wallet (for deployment and on‑chain interactions)
+## Deployment
 
+Copy `.env.example` to `.env`, supply only reviewed values, then validate and deploy:
 
-## Setup
+```bash
+npm run check:network -- --network baseSepolia
+npm run deploy:governance -- --network baseSepolia
+npm run preflight:testnet -- --network baseSepolia
+npm run deploy -- --network baseSepolia
+npm run prepare:ownership -- --network baseSepolia
+npm run attest:activation -- --network baseSepolia
+```
 
-1) Clone and install dependencies
+`preflight:testnet` is read-only and deliberately requires
+`SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true`. It checks the pinned source SHA,
+RPC chain/router, deployer balance floor, Safe/timelock and Warp-portal runtime
+code, the immutable USDC runtime contract and six-decimal interface,
+all gateway constructor inputs, the 12-confirmation policy, and a fresh
+owner-only evidence output. It prevents the deployment command from reaching a
+gateway or spoke transaction until those same contract-readiness checks pass.
 
-    git clone https://github.com/your-org/omnichain.git
-    cd omnichain
-    npm install
+```bash
+SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true \
+SOLSLOT_OMNICHAIN_SOURCE_SHA=$(git rev-parse HEAD) \
+SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
+SOLSLOT_SAMUEL_COORDINATE_EVIDENCE_PATH=/secure/omnichain/samuel-coordinates.json \
+SOLSLOT_OMNICHAIN_MIN_DEPLOYER_WEI=10000000000000000 \
+SOLSLOT_OMNICHAIN_PREFLIGHT_OUTPUT=/secure/omnichain/base-sepolia-preflight.json \
+npm run preflight:testnet -- --network baseSepolia
+```
 
-2) Copy the example environment file and fill in values
+Deployment must consume that same fresh receipt and records its hash in the
+immutable deployment evidence. The coordinator requires the matching preflight,
+deployment, and ownership-acceptance records before it exposes the rail.
 
-    cp .env.example .env
-    # Edit .env with your keys and addresses
+```bash
+SOLSLOT_OMNICHAIN_PREFLIGHT_EVIDENCE_PATH=/secure/omnichain/base-sepolia-preflight.json \
+SOLSLOT_OMNICHAIN_PREFLIGHT_MAX_AGE_SECONDS=3600 \
+SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT=/secure/omnichain/base-sepolia-deployment.json \
+npm run deploy -- --network baseSepolia
+```
 
+`deploy:governance` deterministically deploys a 2-of-3 Safe from the verified
+three-administrator ceremony roster and a self-administered 24-hour timelock.
+The Safe is the immutable payout address and sole proposer, canceller, and
+executor. `GOVERNANCE_ADDRESS` is always the timelock, never the Safe.
 
+The rail deployment creates a dedicated gateway and spoke, configures the
+trusted spoke while the deployer is still owner, and starts two-step ownership
+transfer to the timelock. It rejects old mainnet Warp coordinates and requires
+the fresh 2-of-3 Samuel coordinate artifact.
 
-## Quick Start (Contracts)
+Every deployment also requires `SOLSLOT_OMNICHAIN_SOURCE_SHA` to match a clean
+checkout, `SOLSLOT_OMNICHAIN_CONFIRMATIONS` of at least 12 outside Hardhat,
+and a new `SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT` path. The path is validated
+before any transaction is sent. The script writes a
+non-overwritable, owner-only JSON record containing the source SHA, chain and
+token configuration, deployment receipts, ownership-handoff state, and runtime
+code hashes. The coordinator must not enable an external-payment rail until
+governance ownership is accepted and this evidence has been independently
+reviewed. After the governance timelock accepts both contract transfers, run:
 
-1) Compile
+```bash
+SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH=/secure/omnichain/deployment.json \
+SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_OUTPUT=/secure/omnichain/ownership-intent.json \
+npm run prepare:ownership -- --network baseSepolia
+```
 
-    npx hardhat compile
+Submit the generated `scheduleTransaction` through the 2-of-3 Safe, wait at
+least 86,400 seconds, then submit `executeTransaction` through that same Safe.
+Only after the operation is complete may activation evidence be produced:
 
-2) Run tests (if any)
+```bash
+SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH=/secure/omnichain/deployment.json \
+SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
+SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_PATH=/secure/omnichain/ownership-intent.json \
+SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_OUTPUT=/secure/omnichain/activation.json \
+SOLSLOT_OMNICHAIN_GATEWAY_PROFILE=bse \
+GOVERNANCE_ADDRESS=0x... \
+SAFE_ADDRESS=0x... \
+npm run attest:activation -- --network baseSepolia
+```
 
-    npx hardhat test
+The activation attestation requires the recorded timelock operation to be done,
+then re-reads the live `owner()` and runtime bytecode of
+the gateway and spoke, binds both to the immutable deployment artifact, and
+refuses pending or mismatched ownership. It is also non-overwritable.
 
-3) Deploy (example: using the baseMainnet network from hardhat.config.js)
+Run the read-only escrow event relayer as a separate service after activation:
 
-    npx hardhat run scripts/deploy.js --network baseMainnet
+```bash
+SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_PATH=/secure/omnichain/activation.json \
+SOLSLOT_ESCROW_CALLBACK_URL=https://staging.solslot.com/protocol/purchase-intents/escrow-webhook \
+SOLSLOT_ESCROW_CALLBACK_TOKEN=... \
+SOLSLOT_ESCROW_RELAYER_STATE_PATH=/var/lib/solslot/escrow-relayer.json \
+SOLSLOT_ESCROW_START_BLOCK=... \
+SOLSLOT_ESCROW_CONFIRMATIONS=12 \
+npm run relay:escrow -- --network baseSepolia
+```
 
-Adjust the network flag to match your configuration.
+The relayer has no signer and never settles funds. It verifies the RPC chain,
+activation-bound spoke bytecode, and at least 12 confirmations; reads the full
+deposit struct for each `PaymentDeposited` log; submits the exact ten-word
+message and block provenance to the authenticated backend callback; and then
+advances an owner-only local checkpoint. A failed callback leaves the block
+uncheckpointed for an idempotent retry. The callback token is a backend secret
+and must not enter a browser bundle or shell history.
 
-## Environment Variables
+Before accepting a testnet rail, produce a non-overwritable settlement rehearsal
+receipt for each terminal path. This command is read-only: it neither creates a
+purchase nor signs, relays, or settles a transaction. It verifies a confirmed
+`PaymentDeposited` transaction against the activation evidence and the exact
+canonical `purchaseArtifactV2`, then requires the on-chain deposit to have
+reached either `SettledSuccess` or `SettledRefund`.
 
-Create a .env in the project root (never commit secrets). See .env.example for a full, documented template. Common variables:
+```bash
+SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_PATH=/secure/omnichain/activation.json \
+SOLSLOT_REHEARSAL_PURCHASE_ARTIFACT_PATH=/secure/omnichain/purchase-artifact.json \
+SOLSLOT_REHEARSAL_DEPOSIT_TX_HASH=0x... \
+SOLSLOT_REHEARSAL_EXPECTED_OUTCOME=success \
+SOLSLOT_REHEARSAL_CONFIRMATIONS=12 \
+SOLSLOT_REHEARSAL_OUTPUT=/secure/omnichain/rehearsal-success.json \
+npm run rehearse:escrow -- --network baseSepolia
+```
 
-- BASE_MAINNET_RPC_URL — HTTPS RPC for Hardhat tasks and scripts
-- MNEMONIC — 12/24‑word seed for deploying and scripts (dev or throwaway recommended)
-- PRIVATE_KEY — Alternative to MNEMONIC (use one or the other)
+Run it once with `success` and once with `refund`, using separate output paths.
+The purchase artifact and output are owner-only local files; the command rejects
+symlinks, oversized inputs, stale/mismatched runtime code, unconfirmed receipts,
+multiple deposit events, non-terminal outcomes, and any payment field or token
+that differs from the canonical artifact.
 
-
-
-Tip: Keep addresses consistent with the network your RPC points to.
-
-## Deploy Instructions (Typical Flow)
-
-1) Configure your .env for the chosen network (RPC + MNEMONIC/PRIVATE_KEY).
-2) Compile the contracts:
-
-    npx hardhat compile
-
-3) Deploy using your preferred script:
-
-    npx hardhat run scripts/deploy.js --network baseMainnet
-
-4) Note the deployed addresses and update your .env (e.g., ESCROW_CONTRACT).
-
-5) Interact via scripts or Hardhat tasks as needed.
-
-
+Deploy Base gateway/spoke first, configure every spoke allowlist in both directions, run testnet end-to-end payments, and only then deploy the disabled Ethereum failover gateway. Existing payments never change hubs.
 
 ## Security
 
-- Never commit secrets. Only commit .env.example.
-- Use distinct keys for development vs. production and rotate regularly.
-- Verify contract code, dependencies, and addresses before deploying to mainnets.
-- Consider audits and thorough testing before production use.
+- CCIP callbacks require the official router plus the exact source selector and allowlisted sender.
+- Warp results require the exact portal, `xch` source, Samuel return puzzle, unused nonce, global payment ID, exact amount, and boolean result.
+- Settlement is one-way and idempotent. Partial payouts and arbitrary administrator recipients are removed.
+- Emergency resolution has a minimum seven-day delay and can refund only the original depositor.
+- Hub native-fee spending is capped per message, and fee shortages leave retryable queued state.
+- Contracts are non-upgradeable and versioned.
 
-## License
+Review `security/THREAT_MODEL.md`, `security/INVARIANTS.md`, `security/DEPLOYMENT_RUNBOOK.md`, and `security/AUDIT_SCOPE.md`. An independent external audit is mandatory before accepting mainnet value.
 
-MIT
+`NftRedemption.sol` remains an independent legacy attestation-redemption contract and is not part of the CCIP payment path.

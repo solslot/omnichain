@@ -1,13 +1,28 @@
 {
   "name": "omnichain",
   "version": "1.0.0",
-  "description": "",
+  "description": "SolSlot CCIP-to-Warp omnichain escrow contracts",
+  "private": true,
   "main": "hardhat.config.js",
   "directories": {
     "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "hardhat compile",
+    "clean": "hardhat clean",
+    "test": "hardhat test test/*.test.js",
+    "test:coverage": "hardhat coverage",
+    "deploy": "hardhat run scripts/deploy-omnichain.js",
+    "preflight:testnet": "hardhat run scripts/preflight-testnet-deployment.js",
+    "deploy:governance": "hardhat run scripts/deploy-alpha-governance.js",
+    "attest:activation": "hardhat run scripts/attest-omnichain-activation.js",
+    "prepare:ownership": "hardhat run scripts/prepare-ownership-activation.js",
+    "relay:escrow": "hardhat run scripts/relay-escrow-deposits.js",
+    "rehearse:escrow": "hardhat run scripts/rehearse-escrow-settlement.js",
+    "configure:gateway": "hardhat run scripts/configure-gateway.js",
+    "check:config": "node scripts/check-config.js",
+    "check:network": "hardhat run scripts/check-network.js",
+    "security:slither": "slither . --filter-paths 'EscrowVault.sol|NftRedemption.sol|contracts/test|node_modules' --exclude-dependencies --exclude reentrancy-balance,reentrancy-eth,timestamp,low-level-calls"
   },
   "repository": {
     "type": "git",
@@ -21,11 +36,15 @@
   },
   "homepage": "https://github.com/solomonslot/omnichain#readme",
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "@openzeppelin/contracts": "4.9",
-    "@openzeppelin/contracts-upgradeable": "^5.3.0",
-    "dotenv": "^16.5.0",
-    "ethers": "^6.13.5",
-    "hardhat": "^2.23.0"
+    "@chainlink/contracts-ccip": "1.6.4",
+    "@nomicfoundation/hardhat-toolbox": "5.0.0",
+    "@openzeppelin/contracts": "4.9.6",
+    "@openzeppelin/contracts-4.8.3": "npm:@openzeppelin/contracts@4.8.3",
+    "@openzeppelin/contracts-5.0.2": "npm:@openzeppelin/contracts@5.0.2",
+    "@safe-global/protocol-kit": "8.0.4",
+    "dotenv": "16.5.0",
+    "ethers": "6.14.0",
+    "hardhat": "2.28.0",
+    "hardhat-preprocessor": "0.1.5"
   }
 }
