@@ -70,8 +70,7 @@
     "selector": "10344971235874465080",
     "router": "0xD3b06cEbF099CE7DA4AcCf578aaebFDBd6e88a93",
     "stablecoins": {
-      "usdc": null,
-      "usdt": null
+      "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
     },
     "hub": "base",
     "enabled": false

@@ -49,7 +49,6 @@ contract OmnichainEscrowSpoke is CCIPReceiver, ILocalSpoke, Ownable2Step, Pausab
     }
 
     IERC20 public immutable usdcToken;
-    IERC20 public immutable usdtToken;
     address public immutable payoutAddress;
     uint64 public immutable localChainSelector;
     uint256 public immutable resultGasLimit;
@@ -113,14 +112,13 @@ contract OmnichainEscrowSpoke is CCIPReceiver, ILocalSpoke, Ownable2Step, Pausab
         address router,
         uint64 chainSelector,
         address usdc,
-        address usdt,
         address payout,
         uint64 initialHubChainSelector,
         address initialHubGateway,
         uint256 ccipResultGasLimit,
         uint256 refundDelay
     ) CCIPReceiver(router) {
-        if (router == address(0) || usdc == address(0) || usdt == address(0) || payout == address(0)) {
+        if (router == address(0) || usdc == address(0) || payout == address(0)) {
             revert ZeroAddress();
         }
         if (
@@ -129,14 +127,11 @@ contract OmnichainEscrowSpoke is CCIPReceiver, ILocalSpoke, Ownable2Step, Pausab
             initialHubGateway == address(0) ||
             ccipResultGasLimit == 0 ||
             refundDelay < 7 days ||
-            usdc == usdt ||
-            IERC20Metadata(usdc).decimals() != 6 ||
-            IERC20Metadata(usdt).decimals() != 6
+            IERC20Metadata(usdc).decimals() != 6
         ) revert InvalidConfiguration();
 
         i_router = IRouterClient(router);
         usdcToken = IERC20(usdc);
-        usdtToken = IERC20(usdt);
         payoutAddress = payout;
         localChainSelector = chainSelector;
         hubChainSelector = initialHubChainSelector;
@@ -150,7 +145,7 @@ contract OmnichainEscrowSpoke is CCIPReceiver, ILocalSpoke, Ownable2Step, Pausab
     }
 
     function isSupportedToken(address token) public view returns (bool) {
-        return token == address(usdcToken) || token == address(usdtToken);
+        return token == address(usdcToken);
     }
 
     function deriveGlobalPaymentId(

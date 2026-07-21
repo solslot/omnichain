@@ -21,7 +21,7 @@ function configuration() {
     selector: "10344971235874465080",
     router: address("11"),
     hub: "base",
-    stablecoins: { usdc: null, usdt: null },
+    stablecoins: { usdc: null },
   };
 }
 
@@ -34,8 +34,8 @@ function networks() {
 function environment(overrides = {}) {
   return {
     PAYOUT_ADDRESS: address("12"),
+    SAFE_ADDRESS: address("12"),
     USDC_ADDRESS: address("13"),
-    USDT_ADDRESS: address("14"),
     GOVERNANCE_ADDRESS: address("15"),
     CCIP_CALLBACK_GAS: "500000",
     EMERGENCY_REFUND_DELAY_SECONDS: "604800",
@@ -64,7 +64,7 @@ function provider(overrides = {}) {
 
 function preflightRecord(settings, inspection, overrides = {}) {
   return withArtifactHash({
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "solslot-omnichain-testnet-deployment-preflight",
     sourceSha: "a".repeat(40),
     network: "baseSepolia",
@@ -77,8 +77,8 @@ function preflightRecord(settings, inspection, overrides = {}) {
       ccipRouter: configuration().router,
       payout: settings.payout,
       governance: settings.governance,
+      safe: settings.safe,
       usdc: settings.usdc,
-      usdt: settings.usdt,
       warpPortal: settings.gatewaySettings.warpPortal,
       callbackGas: settings.callbackGas.toString(),
       emergencyDelay: settings.emergencyDelay.toString(),
@@ -112,7 +112,7 @@ describe("testnet deployment preflight", function () {
       deployerBalanceWei: "1000000000000000000",
       minimumDeployerBalanceWei: "1",
     });
-    expect(inspected.tokenDecimals).to.deep.equal({ usdc: 6, usdt: 6 });
+    expect(inspected.tokenDecimals).to.deep.equal({ usdc: 6 });
     expect(settings.hubChainSelector).to.equal(10344971235874465080n);
   });
 
@@ -123,6 +123,21 @@ describe("testnet deployment preflight", function () {
       "baseSepolia",
       networks(),
     )).to.throw("MAX_CCIP_FEE_WEI must be at least 1");
+  });
+
+  it("requires the payout Safe and timelock to be distinct", function () {
+    expect(() => deploymentSettings(
+      environment({ SAFE_ADDRESS: address("14") }),
+      configuration(),
+      "baseSepolia",
+      networks(),
+    )).to.throw("PAYOUT_ADDRESS must equal SAFE_ADDRESS");
+    expect(() => deploymentSettings(
+      environment({ GOVERNANCE_ADDRESS: address("12") }),
+      configuration(),
+      "baseSepolia",
+      networks(),
+    )).to.throw("must be the timelock");
   });
 
   it("rejects incorrect stablecoin decimals and undeployed governance", async function () {

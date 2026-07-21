@@ -10,6 +10,7 @@ const {
   withArtifactHash,
   writeEvidence,
 } = require("./lib/deployment-evidence");
+const { validateGovernanceEvidence } = require("./lib/governance-deployment");
 
 async function runtimeCodeHash(address, label) {
   const code = await ethers.provider.getCode(address);
@@ -42,8 +43,37 @@ async function main() {
   if (!contracts || !deploymentConfig || deployment.rail !== "ccip-warp-escrow") {
     throw new Error("deployment evidence schema is unsupported");
   }
-  const governance = requiredAddress("GOVERNANCE_ADDRESS", deploymentConfig.governance);
-  sameAddress(governance, deploymentConfig.governance, "GOVERNANCE_ADDRESS");
+  if (deployment.schemaVersion !== 2) throw new Error("deployment evidence schema is unsupported");
+  const governance = requiredAddress("GOVERNANCE_ADDRESS", deploymentConfig.governanceTimelock);
+  sameAddress(governance, deploymentConfig.governanceTimelock, "GOVERNANCE_ADDRESS");
+  const safe = requiredAddress("SAFE_ADDRESS", deploymentConfig.governanceSafe);
+  sameAddress(safe, deploymentConfig.governanceSafe, "SAFE_ADDRESS");
+  const governanceEvidence = await validateGovernanceEvidence({
+    path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
+    provider: ethers.provider,
+    safe,
+    timelock: governance,
+  });
+  if (governanceEvidence.artifactHash !== deployment.governanceArtifactHash) {
+    throw new Error("governance evidence does not match the deployment evidence");
+  }
+  const ownershipIntent = readEvidence(
+    process.env.SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_PATH,
+    "ownership_activation_intent",
+  );
+  if (
+    ownershipIntent.schemaVersion !== 1 ||
+    ownershipIntent.kind !== "solslot-omnichain-ownership-activation-intent" ||
+    ownershipIntent.deploymentArtifactHash !== deployment.artifactHash ||
+    ownershipIntent.safe.toLowerCase() !== safe.toLowerCase() ||
+    ownershipIntent.timelock.toLowerCase() !== governance.toLowerCase()
+  ) {
+    throw new Error("ownership activation intent does not match the deployment");
+  }
+  const timelock = await ethers.getContractAt("SolslotAlphaTimelock", governance);
+  if (!(await timelock.isOperationDone(ownershipIntent.operationId))) {
+    throw new Error("ownership acceptance timelock operation is not complete");
+  }
   const gateway = await ethers.getContractAt("SolomonWarpGateway", contracts.gateway);
   const spoke = await ethers.getContractAt("OmnichainEscrowSpoke", contracts.spoke);
   const [gatewayOwner, spokeOwner] = await Promise.all([gateway.owner(), spoke.owner()]);
@@ -64,9 +94,10 @@ async function main() {
     throw new Error("SOLSLOT_OMNICHAIN_GATEWAY_PROFILE is required and must be a safe identifier");
   }
   const activation = withArtifactHash({
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "ccip-warp-escrow-activation",
     deploymentArtifactHash: deployment.artifactHash,
+    ownershipOperationArtifactHash: ownershipIntent.artifactHash,
     sourceSha,
     network: network.name,
     chainId: config.chainId,
@@ -74,6 +105,7 @@ async function main() {
     contracts: { gateway: contracts.gateway, spoke: contracts.spoke },
     runtimeCodeHashes,
     governance,
+    governanceSafe: safe,
     observedOwners: { gateway: gatewayOwner, spoke: spokeOwner },
     ownershipAccepted: true,
     activatedAt: new Date().toISOString(),

@@ -16,6 +16,8 @@ const {
   validatePreflightEvidence,
   requiredUint,
 } = require("./lib/deployment-preflight");
+const { validateGovernanceEvidence } = require("./lib/governance-deployment");
+const { validateSamuelCoordinates } = require("./lib/samuel-coordinates");
 
 async function verify(address, constructorArguments) {
   if (process.env.VERIFY_CONTRACTS !== "true") return;
@@ -36,6 +38,12 @@ async function confirmedReceipt(contract, confirmations, label) {
   return { hash: receipt.hash, blockNumber: receipt.blockNumber };
 }
 
+async function confirmedCall(transaction, confirmations, label) {
+  const receipt = await transaction.wait(confirmations);
+  if (!receipt || receipt.status !== 1) throw new Error(`${label} failed`);
+  return { hash: receipt.hash, blockNumber: receipt.blockNumber };
+}
+
 async function main() {
   const sourceSha = requiredSourceSha();
   const evidenceOutput = requireNewEvidencePath(
@@ -52,6 +60,17 @@ async function main() {
     settings,
     deployer: await deployer.getAddress(),
   });
+  const governanceEvidence = await validateGovernanceEvidence({
+    path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
+    provider: ethers.provider,
+    safe: settings.safe,
+    timelock: settings.governance,
+  });
+  if (!settings.gatewaySettings) throw new Error("alpha deployment must create a dedicated gateway");
+  const samuelEvidence = validateSamuelCoordinates(
+    process.env.SOLSLOT_SAMUEL_COORDINATE_EVIDENCE_PATH,
+    settings.gatewaySettings,
+  );
   const preflight = validatePreflightEvidence({
     evidencePath: process.env.SOLSLOT_OMNICHAIN_PREFLIGHT_EVIDENCE_PATH,
     sourceSha,
@@ -66,11 +85,17 @@ async function main() {
       60n,
     )),
   });
+  if (preflight.governanceArtifactHash !== governanceEvidence.artifactHash) {
+    throw new Error("preflight governance evidence does not match this deployment");
+  }
+  if (preflight.samuelCoordinateArtifactHash !== samuelEvidence.artifactHash) {
+    throw new Error("preflight Samuel evidence does not match this deployment");
+  }
   const {
     payout,
     usdc,
-    usdt,
     governance,
+    safe,
     callbackGas,
     emergencyDelay,
     confirmations,
@@ -78,6 +103,8 @@ async function main() {
   } = settings;
   let gatewayAddress;
   let gatewayDeployment = null;
+  let gatewayContract = null;
+  let gatewayOwnershipTransfer = null;
 
   if (deployGateway) {
     if (config.hub !== "base" && config.hub !== "ethereum") {
@@ -94,12 +121,16 @@ async function main() {
       settings.gatewaySettings.maxWarpTollWei,
       settings.gatewaySettings.maxCcipFeeWei,
     ];
-    const gateway = await ethers.deployContract("SolomonWarpGateway", gatewayArgs);
-    await gateway.waitForDeployment();
-    gatewayAddress = await gateway.getAddress();
-    gatewayDeployment = await confirmedReceipt(gateway, confirmations, "gateway");
+    gatewayContract = await ethers.deployContract("SolomonWarpGateway", gatewayArgs);
+    await gatewayContract.waitForDeployment();
+    gatewayAddress = await gatewayContract.getAddress();
+    gatewayDeployment = await confirmedReceipt(gatewayContract, confirmations, "gateway");
     await verify(gatewayAddress, gatewayArgs);
-    await (await gateway.transferOwnership(governance)).wait();
+    gatewayOwnershipTransfer = await confirmedCall(
+      await gatewayContract.transferOwnership(governance),
+      confirmations,
+      "gateway ownership transfer",
+    );
   } else {
     gatewayAddress = settings.gateway;
   }
@@ -109,7 +140,6 @@ async function main() {
     config.router,
     BigInt(config.selector),
     usdc,
-    usdt,
     payout,
     hubSelector,
     gatewayAddress,
@@ -121,10 +151,31 @@ async function main() {
   const spokeAddress = await spoke.getAddress();
   const spokeDeployment = await confirmedReceipt(spoke, confirmations, "spoke");
   await verify(spokeAddress, spokeArgs);
-  await (await spoke.transferOwnership(governance)).wait();
+  let trustedSpokeUpdate = null;
+  if (gatewayContract) {
+    trustedSpokeUpdate = await confirmedCall(
+      await gatewayContract.setTrustedSpoke(BigInt(config.selector), spokeAddress),
+      confirmations,
+      "trusted spoke configuration",
+    );
+    if (await gatewayContract.trustedSpokes(BigInt(config.selector)) !== spokeAddress) {
+      throw new Error("gateway trusted spoke configuration did not persist");
+    }
+  }
+  const spokeOwnershipTransfer = await confirmedCall(
+    await spoke.transferOwnership(governance),
+    confirmations,
+    "spoke ownership transfer",
+  );
+  if (
+    await spoke.pendingOwner() !== governance ||
+    (gatewayContract && await gatewayContract.pendingOwner() !== governance)
+  ) {
+    throw new Error("timelock is not the pending owner of both contracts");
+  }
 
   const evidence = withArtifactHash({
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolVersion: "solslot-v2",
     rail: "ccip-warp-escrow",
     sourceSha,
@@ -133,31 +184,37 @@ async function main() {
     chainSelector: config.selector,
     confirmations,
     preflightArtifactHash: preflight.artifactHash,
+    governanceArtifactHash: governanceEvidence.artifactHash,
+    samuelCoordinateArtifactHash: samuelEvidence.artifactHash,
     contracts: {
       ccipRouter: config.router,
       gateway: gatewayAddress,
       spoke: spokeAddress,
       usdc,
-      usdt,
     },
     configuration: {
       hubChainSelector: hubSelector.toString(),
       callbackGas: callbackGas.toString(),
       emergencyDelay: emergencyDelay.toString(),
       payoutAddress: payout,
-      governance,
+      governanceSafe: safe,
+      governanceTimelock: governance,
       ownershipAccepted: false,
     },
     deploymentTransactions: {
       spoke: spokeDeployment,
       ...(gatewayDeployment ? { gateway: gatewayDeployment } : {}),
+      gatewayOwnershipTransfer,
+      spokeOwnershipTransfer,
+      trustedSpokeUpdate,
     },
     runtimeCodeHashes: {
       ccipRouter: await runtimeCodeHash(config.router, "CCIP router"),
       gateway: await runtimeCodeHash(gatewayAddress, "gateway"),
       spoke: await runtimeCodeHash(spokeAddress, "spoke"),
       usdc: await runtimeCodeHash(usdc, "USDC"),
-      usdt: await runtimeCodeHash(usdt, "USDT"),
+      governanceSafe: await runtimeCodeHash(safe, "Safe"),
+      governanceTimelock: await runtimeCodeHash(governance, "governance timelock"),
     },
     createdAt: new Date().toISOString(),
   });

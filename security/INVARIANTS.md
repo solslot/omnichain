@@ -3,8 +3,8 @@
 ## `OmnichainEscrowSpoke`
 
 - `status == None` implies no token amount is assigned to the global payment ID.
-- `RequestSent` deposits hold exactly their recorded amount of the recorded immutable USDC or USDT contract unless that token contract itself is compromised.
-- USDC and USDT balances are conserved independently; settlement and refund always transfer the deposit's recorded token.
+- `RequestSent` deposits hold exactly their recorded amount of the immutable USDC contract unless that token contract itself is compromised.
+- USDC balances are conserved; settlement and refund always transfer the configured USDC token.
 - `ResultReceived` requires the result origin, spoke, global ID, amount, and nonzero Warp nonce to match the deposit.
 - `SettledSuccess`, `SettledRefund`, and `EmergencyRefund` are mutually exclusive terminal states.
 - A terminal state cannot transition again.

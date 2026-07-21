@@ -55,9 +55,10 @@ function defaultHubName(config, networkName) {
 function deploymentSettings(environment, config, networkName, networks) {
   const payout = requiredAddress(environment, "PAYOUT_ADDRESS");
   const usdc = requiredAddress(environment, "USDC_ADDRESS", config.stablecoins?.usdc);
-  const usdt = requiredAddress(environment, "USDT_ADDRESS", config.stablecoins?.usdt);
-  if (usdc === usdt) throw new Error("USDC_ADDRESS and USDT_ADDRESS must differ");
   const governance = requiredAddress(environment, "GOVERNANCE_ADDRESS");
+  const safe = requiredAddress(environment, "SAFE_ADDRESS");
+  if (payout !== safe) throw new Error("PAYOUT_ADDRESS must equal SAFE_ADDRESS for testnet alpha");
+  if (governance === safe) throw new Error("GOVERNANCE_ADDRESS must be the timelock, not the Safe");
   const callbackGas = requiredUint(environment, "CCIP_CALLBACK_GAS", "500000", 1n);
   const emergencyDelay = requiredUint(environment, "EMERGENCY_REFUND_DELAY_SECONDS", "604800", 604800n);
   const confirmations = networkName === "hardhat"
@@ -92,8 +93,8 @@ function deploymentSettings(environment, config, networkName, networks) {
   return {
     payout,
     usdc,
-    usdt,
     governance,
+    safe,
     callbackGas,
     emergencyDelay,
     confirmations,
@@ -128,18 +129,15 @@ async function inspectDeploymentReadiness({
   if (Number(network.chainId) !== config.chainId) {
     throw new Error("deployment RPC chain does not match configured network");
   }
-  const [router, usdc, usdt, governance] = await Promise.all([
+  const [router, usdc, governance, safe] = await Promise.all([
     runtimeCode(provider, config.router, "CCIP router"),
     runtimeCode(provider, settings.usdc, "USDC"),
-    runtimeCode(provider, settings.usdt, "USDT"),
     runtimeCode(provider, settings.governance, "governance"),
+    runtimeCode(provider, settings.safe, "Safe"),
   ]);
-  const [usdcDecimals, usdtDecimals] = await Promise.all([
-    tokenDecimals(provider, settings.usdc),
-    tokenDecimals(provider, settings.usdt),
-  ]);
-  if (usdcDecimals !== 6 || usdtDecimals !== 6) {
-    throw new Error("USDC and USDT must both report exactly six decimals");
+  const usdcDecimals = await tokenDecimals(provider, settings.usdc);
+  if (usdcDecimals !== 6) {
+    throw new Error("USDC must report exactly six decimals");
   }
   const additional = settings.deployGateway
     ? [await runtimeCode(provider, settings.gatewaySettings.warpPortal, "Warp portal")]
@@ -154,9 +152,9 @@ async function inspectDeploymentReadiness({
     deployer: deployerAddress,
     deployerBalanceWei: deployerBalanceWei.toString(),
     minimumDeployerBalanceWei: minimumDeployerBalanceWei.toString(),
-    tokenDecimals: { usdc: usdcDecimals, usdt: usdtDecimals },
+    tokenDecimals: { usdc: usdcDecimals },
     runtimeCodeHashes: Object.fromEntries(
-      [router, usdc, usdt, governance, ...additional].map((item) => [item.address, item.codeHash]),
+      [router, usdc, governance, safe, ...additional].map((item) => [item.address, item.codeHash]),
     ),
   };
 }
@@ -195,7 +193,7 @@ function validatePreflightEvidence({
   }
   const preflight = readEvidence(evidencePath, "preflight");
   if (
-    preflight.schemaVersion !== 1 ||
+    preflight.schemaVersion !== 2 ||
     preflight.kind !== "solslot-omnichain-testnet-deployment-preflight" ||
     preflight.sourceSha !== sourceSha ||
     preflight.network !== networkName ||
@@ -219,8 +217,8 @@ function validatePreflightEvidence({
     ccipRouter: config.router,
     payout: settings.payout,
     governance: settings.governance,
+    safe: settings.safe,
     usdc: settings.usdc,
-    usdt: settings.usdt,
     ...(settings.deployGateway
       ? { warpPortal: settings.gatewaySettings.warpPortal }
       : { hubGateway: settings.gateway }),
@@ -237,8 +235,8 @@ function validatePreflightEvidence({
   ) {
     throw new Error("preflight evidence numeric settings do not match this deployment");
   }
-  if (preflight.inspection?.tokenDecimals?.usdc !== 6 || preflight.inspection?.tokenDecimals?.usdt !== 6) {
-    throw new Error("preflight evidence stablecoin decimals are invalid");
+  if (preflight.inspection?.tokenDecimals?.usdc !== 6) {
+    throw new Error("preflight evidence USDC decimals are invalid");
   }
   for (const [label, address] of Object.entries(expectedAddresses)) {
     if (["payout"].includes(label)) continue;

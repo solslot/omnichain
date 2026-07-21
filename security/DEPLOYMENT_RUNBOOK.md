@@ -10,23 +10,29 @@
 
 ## Deployment order
 
-1. Deploy Base gateway paused, then Base spoke paused.
-2. Deploy each satellite spoke paused and configure its Base gateway route.
-3. Allowlist every spoke selector/address on Base and verify both directions against official CCIP metadata.
-4. Deploy Ethereum gateway and spoke paused; keep the Ethereum gateway unavailable to normal routing.
-5. Transfer ownership to the audited timelock, accept ownership from the timelock, and remove deployer access.
-6. Fund gateway native-fee treasury with canary limits and alert thresholds.
-7. Run one end-to-end testnet payment per chain before enabling deposits.
-8. Enable Base canary first, then Polygon, Optimism, Avalanche, Robinhood, and Ethereum-origin traffic with value caps.
+1. Export and independently compare the three Safe owners against the latest
+   completed genesis enrollment; require threshold 2 and no duplicates.
+2. Generate three dedicated Samuel identities on the validator hosts and launch
+   a fresh 2-of-3 Testnet11 portal plus a dedicated Base Sepolia portal.
+3. Deploy the 2-of-3 Safe and self-administered 86,400-second timelock. Verify
+   live owners, threshold, roles, bytecode, and immutable Safe payout binding.
+4. Produce the read-only schema-v2 preflight for the exact source SHA, Circle
+   Base Sepolia USDC, fresh Samuel coordinates, Safe, and timelock.
+5. Deploy the dedicated Base Sepolia gateway and USDC-only spoke, configure the
+   trusted spoke, then nominate the timelock as pending owner of both.
+6. Submit the generated ownership schedule through the Safe, wait at least 24
+   hours, execute through the Safe, and attest accepted ownership on chain.
+7. Fund the gateway fee treasury with canary limits and run one complete
+   zkPassport-bound purchase plus the required refund rehearsal.
+8. Enable the coordinator rail only after all evidence hashes match. Every
+   non-Base-Sepolia rail and all production rails remain disabled.
 
 ## Failover
 
-1. Pause new deposits on affected spokes; never reroute existing deposits.
-2. Reconcile all Base in-flight global IDs and preserve Base treasury funds.
-3. Verify Ethereum Warp, Samuel, KoS, CCIP lanes, fee caps, allowlists, and treasury.
-4. Queue a timelocked `setHubRoute` operation for future deposits only.
-5. Execute a canary payment through Ethereum before reopening capped traffic.
-6. Fail back using the same process; do not disable processing of old Ethereum requests.
+Alpha has no pre-approved cross-chain failover route. Pause new purchases,
+reconcile every in-flight global payment ID, and keep processing the original
+Base Sepolia route. A replacement route requires its own design review,
+deployment evidence, and rehearsal; never reroute an existing deposit.
 
 ## Stuck payment
 

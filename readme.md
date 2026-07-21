@@ -1,18 +1,19 @@
 # SolSlot CCIP-to-Warp Omnichain
 
-SolSlot keeps settlement tokens on each origin chain while Chainlink CCIP carries payment messages to a Base Warp gateway, preserving the existing Warp → Samuel → KoS → Warp result path.
+SolSlot keeps settlement tokens on each origin chain while Chainlink CCIP carries payment messages to a Base Warp gateway, preserving the existing Warp -> Samuel -> KoS -> Warp result path.
 
 ## Architecture
 
-- `OmnichainEscrowSpoke` is deployed once per enabled EVM network. It accepts only its immutable six-decimal USDC and USDT contracts, records the selected token per deposit, authenticates the result, and pays or refunds that exact token.
+- The alpha `OmnichainEscrowSpoke` accepts only its immutable six-decimal USDC contract. Base Sepolia is pinned to Circle USDC at `0x036CbD53842c5426634e7929541eC2318f3dCF7e`; no test USDT is accepted or deployed.
 - `SolomonWarpGateway` is deployed on Base and Ethereum. Base is primary; Ethereum remains disabled until a controlled failover. Gateway callbacks queue work, while separate permissionless calls pay Warp/CCIP fees and retry forwarding.
 - Protocol V2 derives a globally unique payment ID from protocol version, origin selector, origin spoke, settlement-token address, and local payment ID.
 - The Samuel/KoS request is ten words: `[globalPaymentId, purchaseId, artifactHash, amount, quantity, collectionId, deedLauncherId, vaultLauncherId, destinationPuzzle, quoteExpiresAt]`. Samuel verifies every word against the coordinator's persisted purchase artifact before asking KoS to reserve or deliver a deed. The Warp result remains `[globalPaymentId, amount, passFail]`.
-- CCIP transfers no tokens. USDC or USDT remains on the origin spoke throughout processing.
+- CCIP transfers no tokens. USDC remains on the origin spoke throughout processing.
 
-## V1 networks
+## Network inventory
 
-Ethereum, Base, Polygon, Optimism, Avalanche, and Robinhood Chain are represented in `config/networks.json`. Robinhood remains disabled until reviewed six-decimal USDC and USDT contracts and a deployed spoke are configured. Aztec and Tron are not supported in V1.
+The alpha deployment is Base Sepolia only. Other historical profiles remain in
+`config/networks.json` for later review and are not evidence for this rail.
 
 Router addresses and selectors are pinned from the official Chainlink CCIP directory. `scripts/check-network.js` verifies the RPC chain, router bytecode, and selected hub lane before deployment.
 
@@ -32,15 +33,17 @@ Copy `.env.example` to `.env`, supply only reviewed values, then validate and de
 
 ```bash
 npm run check:network -- --network baseSepolia
+npm run deploy:governance -- --network baseSepolia
 npm run preflight:testnet -- --network baseSepolia
 npm run deploy -- --network baseSepolia
-npm run configure:gateway -- --network baseSepolia
+npm run prepare:ownership -- --network baseSepolia
+npm run attest:activation -- --network baseSepolia
 ```
 
 `preflight:testnet` is read-only and deliberately requires
 `SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true`. It checks the pinned source SHA,
-RPC chain/router, deployer balance floor, governance and Warp-portal runtime
-code, both immutable stablecoin runtime contracts and six-decimal interfaces,
+RPC chain/router, deployer balance floor, Safe/timelock and Warp-portal runtime
+code, the immutable USDC runtime contract and six-decimal interface,
 all gateway constructor inputs, the 12-confirmation policy, and a fresh
 owner-only evidence output. It prevents the deployment command from reaching a
 gateway or spoke transaction until those same contract-readiness checks pass.
@@ -48,6 +51,8 @@ gateway or spoke transaction until those same contract-readiness checks pass.
 ```bash
 SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true \
 SOLSLOT_OMNICHAIN_SOURCE_SHA=$(git rev-parse HEAD) \
+SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
+SOLSLOT_SAMUEL_COORDINATE_EVIDENCE_PATH=/secure/omnichain/samuel-coordinates.json \
 SOLSLOT_OMNICHAIN_MIN_DEPLOYER_WEI=10000000000000000 \
 SOLSLOT_OMNICHAIN_PREFLIGHT_OUTPUT=/secure/omnichain/base-sepolia-preflight.json \
 npm run preflight:testnet -- --network baseSepolia
@@ -64,7 +69,15 @@ SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT=/secure/omnichain/base-sepolia-deployment.js
 npm run deploy -- --network baseSepolia
 ```
 
-The deployment script rejects missing/placeholder addresses, verifies RPC chain identity and router bytecode, and starts two-step ownership transfer to `GOVERNANCE_ADDRESS`. Governance must be an audited timelock controlled by a multisig and must accept ownership before operations begin.
+`deploy:governance` deterministically deploys a 2-of-3 Safe from the verified
+three-administrator ceremony roster and a self-administered 24-hour timelock.
+The Safe is the immutable payout address and sole proposer, canceller, and
+executor. `GOVERNANCE_ADDRESS` is always the timelock, never the Safe.
+
+The rail deployment creates a dedicated gateway and spoke, configures the
+trusted spoke while the deployer is still owner, and starts two-step ownership
+transfer to the timelock. It rejects old mainnet Warp coordinates and requires
+the fresh 2-of-3 Samuel coordinate artifact.
 
 Every deployment also requires `SOLSLOT_OMNICHAIN_SOURCE_SHA` to match a clean
 checkout, `SOLSLOT_OMNICHAIN_CONFIRMATIONS` of at least 12 outside Hardhat,
@@ -78,13 +91,27 @@ reviewed. After the governance timelock accepts both contract transfers, run:
 
 ```bash
 SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH=/secure/omnichain/deployment.json \
+SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_OUTPUT=/secure/omnichain/ownership-intent.json \
+npm run prepare:ownership -- --network baseSepolia
+```
+
+Submit the generated `scheduleTransaction` through the 2-of-3 Safe, wait at
+least 86,400 seconds, then submit `executeTransaction` through that same Safe.
+Only after the operation is complete may activation evidence be produced:
+
+```bash
+SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH=/secure/omnichain/deployment.json \
+SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
+SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_PATH=/secure/omnichain/ownership-intent.json \
 SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_OUTPUT=/secure/omnichain/activation.json \
 SOLSLOT_OMNICHAIN_GATEWAY_PROFILE=bse \
 GOVERNANCE_ADDRESS=0x... \
+SAFE_ADDRESS=0x... \
 npm run attest:activation -- --network baseSepolia
 ```
 
-The activation attestation re-reads the live `owner()` and runtime bytecode of
+The activation attestation requires the recorded timelock operation to be done,
+then re-reads the live `owner()` and runtime bytecode of
 the gateway and spoke, binds both to the immutable deployment artifact, and
 refuses pending or mismatched ownership. It is also non-overwritable.
 

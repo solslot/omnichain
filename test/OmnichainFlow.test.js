@@ -23,7 +23,6 @@ async function deploySystem(remote) {
   const router = await ethers.deployContract("MockRouter");
   const portal = await ethers.deployContract("MockWarpPortal");
   const usdc = await ethers.deployContract("MockUSDC");
-  const usdt = await ethers.deployContract("MockUSDT");
   const gateway = await ethers.deployContract("SolomonWarpGateway", [
     router.target,
     BASE_SELECTOR,
@@ -40,7 +39,6 @@ async function deploySystem(remote) {
     router.target,
     spokeSelector,
     usdc.target,
-    usdt.target,
     payout.address,
     BASE_SELECTOR,
     gateway.target,
@@ -50,12 +48,10 @@ async function deploySystem(remote) {
 
   await gateway.setTrustedSpoke(spokeSelector, spoke.target);
   await usdc.mint(user.address, AMOUNT * 10n);
-  await usdt.mint(user.address, AMOUNT * 10n);
   await usdc.connect(user).approve(spoke.target, AMOUNT * 10n);
-  await usdt.connect(user).approve(spoke.target, AMOUNT * 10n);
   await owner.sendTransaction({ to: gateway.target, value: ethers.parseEther("1") });
 
-  return { owner, user, payout, outsider, router, portal, usdc, usdt, token: usdc, gateway, spoke, spokeSelector };
+  return { owner, user, payout, outsider, router, portal, usdc, token: usdc, gateway, spoke, spokeSelector };
 }
 
 async function deposit(
@@ -155,36 +151,7 @@ describe("SolSlot CCIP-to-Warp omnichain flow", function () {
     expect((await system.spoke.getDeposit(globalPaymentId)).status).to.equal(3);
   });
 
-  it("escrows and settles USDC and USDT independently", async function () {
-    const system = await deploySystem(false);
-    const sharedLocalPaymentId = ethers.id("dual-token-payment");
-    const usdcPayment = await deposit(system, sharedLocalPaymentId, system.usdc);
-    const usdtPayment = await deposit(
-      system,
-      sharedLocalPaymentId,
-      system.usdt,
-      ethers.id("purchase-usdt"),
-      ethers.id("artifact-usdt"),
-    );
-
-    expect(usdcPayment).not.to.equal(usdtPayment);
-    expect((await system.spoke.getDeposit(usdcPayment)).settlementToken).to.equal(system.usdc.target);
-    expect((await system.spoke.getDeposit(usdtPayment)).settlementToken).to.equal(system.usdt.target);
-
-    await relayWarpResult(system, usdcPayment, true, ethers.id("usdc-warp"));
-    await system.gateway.forwardResult(usdcPayment);
-    await system.spoke.settle(usdcPayment);
-    await relayWarpResult(system, usdtPayment, true, ethers.id("usdt-warp"));
-    await system.gateway.forwardResult(usdtPayment);
-    await system.spoke.settle(usdtPayment);
-
-    expect(await system.usdc.balanceOf(system.payout.address)).to.equal(AMOUNT);
-    expect(await system.usdt.balanceOf(system.payout.address)).to.equal(AMOUNT);
-    expect(await system.usdc.balanceOf(system.spoke.target)).to.equal(0);
-    expect(await system.usdt.balanceOf(system.spoke.target)).to.equal(0);
-  });
-
-  it("rejects tokens outside the immutable USDC/USDT allowlist", async function () {
+  it("rejects every token except the immutable USDC contract", async function () {
     const system = await deploySystem(false);
     const unsupported = await ethers.deployContract("MockUSDC");
     await unsupported.mint(system.user.address, AMOUNT);

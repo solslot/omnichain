@@ -11,15 +11,11 @@ for (const [name, config] of Object.entries(networks)) {
   if (chainIds.has(config.chainId)) throw new Error(`${name}: duplicate chainId`);
   if (selectors.has(config.selector)) throw new Error(`${name}: duplicate selector`);
   const usdc = config.stablecoins?.usdc;
-  const usdt = config.stablecoins?.usdt;
-  if (config.enabled && (!usdc || !usdt)) throw new Error(`${name}: enabled without both USDC and USDT`);
-  for (const [symbol, address] of Object.entries({ usdc, usdt })) {
+  if (config.enabled && !usdc) throw new Error(`${name}: enabled without USDC`);
+  for (const [symbol, address] of Object.entries({ usdc })) {
     if (address !== null && address !== undefined && !ethers.isAddress(address)) {
       throw new Error(`${name}: invalid ${symbol.toUpperCase()} address`);
     }
-  }
-  if (usdc && usdt && usdc.toLowerCase() === usdt.toLowerCase()) {
-    throw new Error(`${name}: USDC and USDT addresses must differ`);
   }
   chainIds.add(config.chainId);
   selectors.add(config.selector);

@@ -4,6 +4,7 @@
 
 - `contracts/OmnichainEscrowSpoke.sol`
 - `contracts/SolomonWarpGateway.sol`
+- `contracts/SolslotAlphaTimelock.sol`
 - `contracts/libraries/OmnichainMessageCodec.sol`
 - `contracts/interfaces/`
 - Deployment/configuration scripts and pinned network metadata
@@ -16,7 +17,7 @@
 - Replay domains, canonical serialization, global payment uniqueness, and ordering
 - Token conservation, token behavior assumptions, terminal settlement, and emergency refunds
 - Callback gas, fee caps, fee depletion, queued retries, and failed CCIP execution
-- Governance, pause behavior, route changes, Base/Ethereum failover, and deployer revocation
+- Safe/timelock governance, pause behavior, route changes, and deployer revocation
 - Samuel validator/KoS idempotency, finality handling, database migration, and secret handling
 
 ## Excluded
