@@ -7,6 +7,7 @@ const MAX_STATE_BYTES = 16 * 1024;
 const PAYMENT_DEPOSITED_ABI = [
   "event PaymentDeposited(bytes32 indexed globalPaymentId, bytes32 indexed localPaymentId, address indexed depositor, address settlementToken, uint256 amount, uint64 hubChainSelector, address hubGateway, bytes32 requestMessageId, uint256 bridgeFee)",
   "function getDeposit(bytes32 globalPaymentId) view returns ((address depositor,address settlementToken,bytes32 localPaymentId,bytes32 purchaseId,bytes32 artifactHash,bytes32 collectionId,bytes32 deedLauncherId,bytes32 vaultLauncherId,bytes32 destinationPuzzle,bytes32 requestMessageId,bytes32 resultMessageId,bytes32 warpNonce,uint256 amount,uint256 quantity,uint64 hubChainSelector,address hubGateway,uint64 createdAt,uint64 quoteExpiresAt,uint8 status,bool succeeded))",
+  "function deriveGlobalPaymentId(address token,bytes32 localPaymentId,bytes32 purchaseId,bytes32 artifactHash) view returns (bytes32)",
 ];
 
 function requiredHex(value, bytes, label) {

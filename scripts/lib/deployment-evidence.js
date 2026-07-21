@@ -43,9 +43,12 @@ function requiredSourceSha(environment = process.env, cwd = process.cwd()) {
   return actual;
 }
 
-function requireNewEvidencePath(outputPath) {
+function requireNewEvidencePath(
+  outputPath,
+  variableName = "SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT",
+) {
   if (!outputPath) {
-    throw new Error("SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT is required");
+    throw new Error(`${variableName} is required`);
   }
   const resolved = path.resolve(outputPath);
   if (fs.existsSync(resolved)) {
@@ -55,8 +58,12 @@ function requireNewEvidencePath(outputPath) {
   return resolved;
 }
 
-function writeEvidence(outputPath, evidence) {
-  const resolved = requireNewEvidencePath(outputPath);
+function writeEvidence(
+  outputPath,
+  evidence,
+  variableName = "SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT",
+) {
+  const resolved = requireNewEvidencePath(outputPath, variableName);
   fs.writeFileSync(resolved, `${JSON.stringify(evidence, null, 2)}\n`, {
     encoding: "utf8",
     flag: "wx",

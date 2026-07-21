@@ -15,6 +15,7 @@
     "deploy": "hardhat run scripts/deploy-omnichain.js",
     "attest:activation": "hardhat run scripts/attest-omnichain-activation.js",
     "relay:escrow": "hardhat run scripts/relay-escrow-deposits.js",
+    "rehearse:escrow": "hardhat run scripts/rehearse-escrow-settlement.js",
     "configure:gateway": "hardhat run scripts/configure-gateway.js",
     "check:config": "node scripts/check-config.js",
     "check:network": "hardhat run scripts/check-network.js",

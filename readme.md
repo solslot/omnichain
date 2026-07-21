@@ -80,6 +80,29 @@ advances an owner-only local checkpoint. A failed callback leaves the block
 uncheckpointed for an idempotent retry. The callback token is a backend secret
 and must not enter a browser bundle or shell history.
 
+Before accepting a testnet rail, produce a non-overwritable settlement rehearsal
+receipt for each terminal path. This command is read-only: it neither creates a
+purchase nor signs, relays, or settles a transaction. It verifies a confirmed
+`PaymentDeposited` transaction against the activation evidence and the exact
+canonical `purchaseArtifactV2`, then requires the on-chain deposit to have
+reached either `SettledSuccess` or `SettledRefund`.
+
+```bash
+SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_PATH=/secure/omnichain/activation.json \
+SOLSLOT_REHEARSAL_PURCHASE_ARTIFACT_PATH=/secure/omnichain/purchase-artifact.json \
+SOLSLOT_REHEARSAL_DEPOSIT_TX_HASH=0x... \
+SOLSLOT_REHEARSAL_EXPECTED_OUTCOME=success \
+SOLSLOT_REHEARSAL_CONFIRMATIONS=12 \
+SOLSLOT_REHEARSAL_OUTPUT=/secure/omnichain/rehearsal-success.json \
+npm run rehearse:escrow -- --network baseSepolia
+```
+
+Run it once with `success` and once with `refund`, using separate output paths.
+The purchase artifact and output are owner-only local files; the command rejects
+symlinks, oversized inputs, stale/mismatched runtime code, unconfirmed receipts,
+multiple deposit events, non-terminal outcomes, and any payment field or token
+that differs from the canonical artifact.
+
 Deploy Base gateway/spoke first, configure every spoke allowlist in both directions, run testnet end-to-end payments, and only then deploy the disabled Ethereum failover gateway. Existing payments never change hubs.
 
 ## Security
