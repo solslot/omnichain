@@ -53,6 +53,17 @@ SOLSLOT_OMNICHAIN_PREFLIGHT_OUTPUT=/secure/omnichain/base-sepolia-preflight.json
 npm run preflight:testnet -- --network baseSepolia
 ```
 
+Deployment must consume that same fresh receipt and records its hash in the
+immutable deployment evidence. The coordinator requires the matching preflight,
+deployment, and ownership-acceptance records before it exposes the rail.
+
+```bash
+SOLSLOT_OMNICHAIN_PREFLIGHT_EVIDENCE_PATH=/secure/omnichain/base-sepolia-preflight.json \
+SOLSLOT_OMNICHAIN_PREFLIGHT_MAX_AGE_SECONDS=3600 \
+SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT=/secure/omnichain/base-sepolia-deployment.json \
+npm run deploy -- --network baseSepolia
+```
+
 The deployment script rejects missing/placeholder addresses, verifies RPC chain identity and router bytecode, and starts two-step ownership transfer to `GOVERNANCE_ADDRESS`. Governance must be an audited timelock controlled by a multisig and must accept ownership before operations begin.
 
 Every deployment also requires `SOLSLOT_OMNICHAIN_SOURCE_SHA` to match a clean

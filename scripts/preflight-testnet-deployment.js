@@ -48,6 +48,7 @@ async function main() {
     deploymentMode: settings.deployGateway ? "new_gateway_and_spoke" : "new_spoke",
     settings: {
       payout: settings.payout,
+      ccipRouter: config.router,
       governance: settings.governance,
       usdc: settings.usdc,
       usdt: settings.usdt,

@@ -4,7 +4,12 @@ const { ethers } = require("ethers");
 const {
   deploymentSettings,
   inspectDeploymentReadiness,
+  validatePreflightEvidence,
 } = require("../scripts/lib/deployment-preflight");
+const { withArtifactHash, writeEvidence } = require("../scripts/lib/deployment-evidence");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 function address(byte) {
   return `0x${byte.repeat(20)}`;
@@ -55,6 +60,34 @@ function provider(overrides = {}) {
     getBalance: async () => 1_000_000_000_000_000_000n,
     ...overrides,
   };
+}
+
+function preflightRecord(settings, inspection, overrides = {}) {
+  return withArtifactHash({
+    schemaVersion: 1,
+    kind: "solslot-omnichain-testnet-deployment-preflight",
+    sourceSha: "a".repeat(40),
+    network: "baseSepolia",
+    chainId: 84532,
+    chainSelector: "10344971235874465080",
+    hubName: "baseSepolia",
+    hubChainSelector: "10344971235874465080",
+    deploymentMode: "new_gateway_and_spoke",
+    settings: {
+      ccipRouter: configuration().router,
+      payout: settings.payout,
+      governance: settings.governance,
+      usdc: settings.usdc,
+      usdt: settings.usdt,
+      warpPortal: settings.gatewaySettings.warpPortal,
+      callbackGas: settings.callbackGas.toString(),
+      emergencyDelay: settings.emergencyDelay.toString(),
+      confirmations: settings.confirmations,
+    },
+    inspection,
+    checkedAt: new Date().toISOString(),
+    ...overrides,
+  });
 }
 
 describe("testnet deployment preflight", function () {
@@ -117,5 +150,48 @@ describe("testnet deployment preflight", function () {
       settings,
       deployer: address("19"),
     })).to.be.rejectedWith("governance has no runtime bytecode");
+  });
+
+  it("requires a fresh immutable preflight receipt with unchanged runtime code", async function () {
+    const settings = deploymentSettings(
+      environment(),
+      configuration(),
+      "baseSepolia",
+      networks(),
+    );
+    const inspection = await inspectDeploymentReadiness({
+      provider: provider(),
+      config: configuration(),
+      settings,
+      deployer: address("19"),
+    });
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solslot-preflight-"));
+    const evidencePath = path.join(directory, "preflight.json");
+    writeEvidence(evidencePath, preflightRecord(settings, inspection));
+    const input = {
+      evidencePath,
+      sourceSha: "a".repeat(40),
+      networkName: "baseSepolia",
+      config: configuration(),
+      settings,
+      inspection,
+    };
+
+    expect(validatePreflightEvidence(input).artifactHash).to.match(/^0x[0-9a-f]{64}$/);
+
+    const stale = path.join(directory, "stale.json");
+    writeEvidence(stale, preflightRecord(settings, inspection, {
+      checkedAt: "2020-01-01T00:00:00.000Z",
+    }));
+    expect(() => validatePreflightEvidence({ ...input, evidencePath: stale }))
+      .to.throw("stale");
+
+    const changedInspection = {
+      ...inspection,
+      runtimeCodeHashes: { ...inspection.runtimeCodeHashes },
+    };
+    changedInspection.runtimeCodeHashes[ethers.getAddress(settings.usdc)] = `0x${"99".repeat(32)}`;
+    expect(() => validatePreflightEvidence({ ...input, inspection: changedInspection }))
+      .to.throw("usdc runtime code has changed");
   });
 });

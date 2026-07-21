@@ -1,4 +1,5 @@
 const { ethers } = require("ethers");
+const { readEvidence } = require("./deployment-evidence");
 
 const TESTNETS = new Set([
   "baseSepolia",
@@ -160,9 +161,100 @@ async function inspectDeploymentReadiness({
   };
 }
 
+function preflightRuntimeHash(preflight, address, label) {
+  const hashes = preflight.inspection?.runtimeCodeHashes;
+  if (!hashes || typeof hashes !== "object" || Array.isArray(hashes)) {
+    throw new Error("preflight evidence runtime code hashes are invalid");
+  }
+  const expected = ethers.getAddress(address).toLowerCase();
+  const match = Object.entries(hashes).find(([candidate]) => {
+    try {
+      return ethers.getAddress(candidate).toLowerCase() === expected;
+    } catch {
+      return false;
+    }
+  });
+  if (!match || !ethers.isHexString(match[1], 32)) {
+    throw new Error(`preflight evidence is missing ${label} runtime code`);
+  }
+  return match[1].toLowerCase();
+}
+
+function validatePreflightEvidence({
+  evidencePath,
+  sourceSha,
+  networkName,
+  config,
+  settings,
+  inspection,
+  now = Date.now(),
+  maximumAgeSeconds = 3600,
+}) {
+  if (!Number.isSafeInteger(maximumAgeSeconds) || maximumAgeSeconds < 60 || maximumAgeSeconds > 86400) {
+    throw new Error("SOLSLOT_OMNICHAIN_PREFLIGHT_MAX_AGE_SECONDS must be between 60 and 86400");
+  }
+  const preflight = readEvidence(evidencePath, "preflight");
+  if (
+    preflight.schemaVersion !== 1 ||
+    preflight.kind !== "solslot-omnichain-testnet-deployment-preflight" ||
+    preflight.sourceSha !== sourceSha ||
+    preflight.network !== networkName ||
+    preflight.chainId !== config.chainId ||
+    preflight.chainSelector !== config.selector ||
+    preflight.hubName !== settings.hubName ||
+    preflight.hubChainSelector !== settings.hubChainSelector.toString() ||
+    preflight.deploymentMode !== (settings.deployGateway ? "new_gateway_and_spoke" : "new_spoke")
+  ) {
+    throw new Error("preflight evidence does not match this deployment");
+  }
+  const checkedAt = Date.parse(String(preflight.checkedAt || ""));
+  if (!Number.isFinite(checkedAt) || checkedAt > now + 60_000 || now - checkedAt > maximumAgeSeconds * 1000) {
+    throw new Error("preflight evidence is stale or has an invalid timestamp");
+  }
+  const declared = preflight.settings;
+  if (!declared || typeof declared !== "object" || Array.isArray(declared)) {
+    throw new Error("preflight evidence settings are invalid");
+  }
+  const expectedAddresses = {
+    ccipRouter: config.router,
+    payout: settings.payout,
+    governance: settings.governance,
+    usdc: settings.usdc,
+    usdt: settings.usdt,
+    ...(settings.deployGateway
+      ? { warpPortal: settings.gatewaySettings.warpPortal }
+      : { hubGateway: settings.gateway }),
+  };
+  for (const [label, expected] of Object.entries(expectedAddresses)) {
+    if (!ethers.isAddress(declared[label]) || ethers.getAddress(declared[label]) !== ethers.getAddress(expected)) {
+      throw new Error(`preflight evidence ${label} does not match this deployment`);
+    }
+  }
+  if (
+    declared.callbackGas !== settings.callbackGas.toString() ||
+    declared.emergencyDelay !== settings.emergencyDelay.toString() ||
+    declared.confirmations !== settings.confirmations
+  ) {
+    throw new Error("preflight evidence numeric settings do not match this deployment");
+  }
+  if (preflight.inspection?.tokenDecimals?.usdc !== 6 || preflight.inspection?.tokenDecimals?.usdt !== 6) {
+    throw new Error("preflight evidence stablecoin decimals are invalid");
+  }
+  for (const [label, address] of Object.entries(expectedAddresses)) {
+    if (["payout"].includes(label)) continue;
+    const expectedHash = preflightRuntimeHash(preflight, address, label);
+    const observedHash = inspection.runtimeCodeHashes[ethers.getAddress(address)];
+    if (!observedHash || observedHash.toLowerCase() !== expectedHash) {
+      throw new Error(`preflight evidence ${label} runtime code has changed`);
+    }
+  }
+  return preflight;
+}
+
 module.exports = {
   deploymentSettings,
   inspectDeploymentReadiness,
   isTestnet,
   requiredUint,
+  validatePreflightEvidence,
 };

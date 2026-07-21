@@ -13,6 +13,8 @@ const {
 const {
   deploymentSettings,
   inspectDeploymentReadiness,
+  validatePreflightEvidence,
+  requiredUint,
 } = require("./lib/deployment-preflight");
 
 async function verify(address, constructorArguments) {
@@ -44,11 +46,25 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   if (!deployer) throw new Error("DEPLOYER_PRIVATE_KEY is required");
   const settings = deploymentSettings(process.env, config, network.name, networks);
-  await inspectDeploymentReadiness({
+  const inspection = await inspectDeploymentReadiness({
     provider: ethers.provider,
     config,
     settings,
     deployer: await deployer.getAddress(),
+  });
+  const preflight = validatePreflightEvidence({
+    evidencePath: process.env.SOLSLOT_OMNICHAIN_PREFLIGHT_EVIDENCE_PATH,
+    sourceSha,
+    networkName: network.name,
+    config,
+    settings,
+    inspection,
+    maximumAgeSeconds: Number(requiredUint(
+      process.env,
+      "SOLSLOT_OMNICHAIN_PREFLIGHT_MAX_AGE_SECONDS",
+      "3600",
+      60n,
+    )),
   });
   const {
     payout,
@@ -116,6 +132,7 @@ async function main() {
     chainId: Number((await ethers.provider.getNetwork()).chainId),
     chainSelector: config.selector,
     confirmations,
+    preflightArtifactHash: preflight.artifactHash,
     contracts: {
       ccipRouter: config.router,
       gateway: gatewayAddress,
