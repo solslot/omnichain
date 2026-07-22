@@ -63,7 +63,7 @@ async function main() {
   const governanceEvidence = await validateGovernanceEvidence({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
-    safe: settings.safe,
+    rootSafe: settings.rootSafe,
     timelock: settings.governance,
   });
   if (!settings.gatewaySettings) throw new Error("alpha deployment must create a dedicated gateway");
@@ -95,7 +95,7 @@ async function main() {
     payout,
     usdc,
     governance,
-    safe,
+    rootSafe,
     callbackGas,
     emergencyDelay,
     confirmations,
@@ -175,7 +175,7 @@ async function main() {
   }
 
   const evidence = withArtifactHash({
-    schemaVersion: 2,
+    schemaVersion: 3,
     protocolVersion: "solslot-v2",
     rail: "ccip-warp-escrow",
     sourceSha,
@@ -197,7 +197,7 @@ async function main() {
       callbackGas: callbackGas.toString(),
       emergencyDelay: emergencyDelay.toString(),
       payoutAddress: payout,
-      governanceSafe: safe,
+      governanceRootSafe: rootSafe,
       governanceTimelock: governance,
       ownershipAccepted: false,
     },
@@ -213,7 +213,7 @@ async function main() {
       gateway: await runtimeCodeHash(gatewayAddress, "gateway"),
       spoke: await runtimeCodeHash(spokeAddress, "spoke"),
       usdc: await runtimeCodeHash(usdc, "USDC"),
-      governanceSafe: await runtimeCodeHash(safe, "Safe"),
+      governanceRootSafe: await runtimeCodeHash(rootSafe, "root Safe"),
       governanceTimelock: await runtimeCodeHash(governance, "governance timelock"),
     },
     createdAt: new Date().toISOString(),

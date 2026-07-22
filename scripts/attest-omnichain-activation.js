@@ -43,15 +43,15 @@ async function main() {
   if (!contracts || !deploymentConfig || deployment.rail !== "ccip-warp-escrow") {
     throw new Error("deployment evidence schema is unsupported");
   }
-  if (deployment.schemaVersion !== 2) throw new Error("deployment evidence schema is unsupported");
+  if (deployment.schemaVersion !== 3) throw new Error("deployment evidence schema is unsupported");
   const governance = requiredAddress("GOVERNANCE_ADDRESS", deploymentConfig.governanceTimelock);
   sameAddress(governance, deploymentConfig.governanceTimelock, "GOVERNANCE_ADDRESS");
-  const safe = requiredAddress("SAFE_ADDRESS", deploymentConfig.governanceSafe);
-  sameAddress(safe, deploymentConfig.governanceSafe, "SAFE_ADDRESS");
+  const rootSafe = requiredAddress("ROOT_SAFE_ADDRESS", deploymentConfig.governanceRootSafe);
+  sameAddress(rootSafe, deploymentConfig.governanceRootSafe, "ROOT_SAFE_ADDRESS");
   const governanceEvidence = await validateGovernanceEvidence({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
-    safe,
+    rootSafe,
     timelock: governance,
   });
   if (governanceEvidence.artifactHash !== deployment.governanceArtifactHash) {
@@ -62,10 +62,10 @@ async function main() {
     "ownership_activation_intent",
   );
   if (
-    ownershipIntent.schemaVersion !== 1 ||
+    ownershipIntent.schemaVersion !== 2 ||
     ownershipIntent.kind !== "solslot-omnichain-ownership-activation-intent" ||
     ownershipIntent.deploymentArtifactHash !== deployment.artifactHash ||
-    ownershipIntent.safe.toLowerCase() !== safe.toLowerCase() ||
+    ownershipIntent.rootSafe.toLowerCase() !== rootSafe.toLowerCase() ||
     ownershipIntent.timelock.toLowerCase() !== governance.toLowerCase()
   ) {
     throw new Error("ownership activation intent does not match the deployment");
@@ -94,7 +94,7 @@ async function main() {
     throw new Error("SOLSLOT_OMNICHAIN_GATEWAY_PROFILE is required and must be a safe identifier");
   }
   const activation = withArtifactHash({
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "ccip-warp-escrow-activation",
     deploymentArtifactHash: deployment.artifactHash,
     ownershipOperationArtifactHash: ownershipIntent.artifactHash,
@@ -105,7 +105,7 @@ async function main() {
     contracts: { gateway: contracts.gateway, spoke: contracts.spoke },
     runtimeCodeHashes,
     governance,
-    governanceSafe: safe,
+    governanceRootSafe: rootSafe,
     observedOwners: { gateway: gatewayOwner, spoke: spokeOwner },
     ownershipAccepted: true,
     activatedAt: new Date().toISOString(),

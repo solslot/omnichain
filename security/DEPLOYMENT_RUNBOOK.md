@@ -10,22 +10,41 @@
 
 ## Deployment order
 
-1. Export and independently compare the three Safe owners against the latest
-   completed genesis enrollment; require threshold 2 and no duplicates.
+1. Export and independently compare the three administrator EOAs against the
+   latest completed genesis enrollment. Require slot 0 as the sole Owner
+   Identity Safe owner, slots 1 and 2 as the two Coadmin Safe owners, no
+   duplicates, child thresholds 1, and a root threshold of 2 over exactly the
+   two child Safe addresses.
 2. Generate three dedicated Samuel identities on the validator hosts and launch
    a fresh 2-of-3 Testnet11 portal plus a dedicated Base Sepolia portal.
-3. Deploy the 2-of-3 Safe and self-administered 86,400-second timelock. Verify
-   live owners, threshold, roles, bytecode, and immutable Safe payout binding.
-4. Produce the read-only schema-v2 preflight for the exact source SHA, Circle
-   Base Sepolia USDC, fresh Samuel coordinates, Safe, and timelock.
+3. Deploy the slot-0 Owner Identity Safe, 1-of-2 Coadmin Safe, 2-of-2 root Safe,
+   guarded recovery module, and self-administered 86,400-second timelock. Verify
+   live owners, thresholds, guard/module/fallback state, roles, bytecode,
+   guardian separation, and immutable root-Safe payout binding.
+4. Produce the read-only schema-v3 preflight for the exact source SHA, Circle
+   Base Sepolia USDC, fresh Samuel coordinates, root Safe, and timelock.
 5. Deploy the dedicated Base Sepolia gateway and USDC-only spoke, configure the
    trusted spoke, then nominate the timelock as pending owner of both.
-6. Submit the generated ownership schedule through the Safe, wait at least 24
-   hours, execute through the Safe, and attest accepted ownership on chain.
+6. Approve the generated ownership schedule through both child Safes, submit it
+   through the root Safe, wait at least 24 hours, repeat for execution, and
+   attest accepted ownership on chain.
 7. Fund the gateway fee treasury with canary limits and run one complete
    zkPassport-bound purchase plus the required refund rehearsal.
 8. Enable the coordinator rail only after all evidence hashes match. Every
    non-Base-Sepolia rail and all production rails remain disabled.
+
+The three guards intentionally freeze each Safe's owner graph. Rotating either
+coadmin therefore requires a fresh reviewed governance deployment and evidence
+set; it is not an emergency in-place mutation. Slot-0 replacement is the only
+in-place rotation path and must use the seven-day recovery flow below.
+
+The tracked npm lockfile must contain no path outside this repository. The
+runtime dependency audit (`npm audit --omit=dev`) must be clean. The full
+development-tool audit currently includes upstream Hardhat 2 and Chainlink CCIP
+tooling advisories; those tools must run only in an isolated trusted release
+environment with reviewed inputs. Their breaking Hardhat 3/CCIP 2 migration is
+a release-engineering gate and must be completed or explicitly dispositioned
+before mainnet value is accepted.
 
 ## Failover
 
@@ -46,5 +65,8 @@ deployment evidence, and rehearsal; never reroute an existing deposit.
 
 1. Pause affected gateways and spokes immediately.
 2. Rotate Samuel hot keys and validator configuration using the existing Chia/Warp governance process.
-3. Rotate EVM governance through the timelock/multisig recovery process.
+3. For a compromised slot-0 key, have the separate secp256k1 guardian initiate
+   recovery, have both coadmins approve, have the replacement key accept, wait
+   seven days, and execute the recovery module. Do not use a root Safe or
+   timelock action to bypass this sequence.
 4. Reconcile all pending messages before unpausing; never change in-flight payment routing.

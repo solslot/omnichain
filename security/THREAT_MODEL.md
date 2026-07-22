@@ -6,7 +6,7 @@
 - Chainlink CCIP authenticates transport, but contracts independently authenticate the router, source selector, and source contract.
 - Warp authenticates transport between Base/Ethereum and Chia; `SolomonWarpGateway` independently authenticates the portal, `xch` source, Samuel return puzzle, and nonce.
 - Samuel validator threshold and KoS are external trust domains. The request is a ten-word protocol V2 message bound to the coordinator's canonical purchase artifact; the response remains the three-word `[globalPaymentId, amount, passFail]` result.
-- The alpha owners must be the self-administered 24-hour timelock controlled by the exact 2-of-3 genesis-administrator Safe. Deployer ownership is temporary only.
+- The alpha owners must be the self-administered 24-hour timelock controlled by the 2-of-2 root Safe. Its owners are the slot-0 Owner Identity Safe and the 1-of-2 Coadmin Safe, so slot 0 plus either coadmin is mandatory. Deployer ownership is temporary only.
 
 ## Security invariants
 
@@ -32,6 +32,9 @@
 | Fee griefing | User-paid outbound quote, per-message hub caps, queue/forward split |
 | Arbitrary administrator payout | No arbitrary recipient function; emergency path is delayed and refund-only |
 | Compromised route administrator | External timelock/multisig, immutable per-payment route, pause and monitored events |
+| Two colluding coadmins | They control only the 1-of-2 Coadmin Safe and cannot satisfy the root Safe without the slot-0 Owner Identity Safe |
+| Compromised slot-0 key | It cannot satisfy the root Safe alone or directly change the Owner Identity Safe configuration; guarded recovery requires a separate guardian, both coadmins, replacement acceptance, and seven days |
+| Recovery guardian compromise | The guardian can only open or cancel a recovery request; it cannot approve or execute replacement alone |
 | Base outage | Governance switches only future deposits to the pre-audited Ethereum gateway; in-flight Base payments remain on Base |
 | Duplicate failover delivery | No active/active route and no in-flight rerouting |
 | KoS retry duplication or deed substitution | Samuel verifies the ten-word message against the coordinator, persists checkout/succeeded flags and the global payment ID, and signs a domain-separated KoS fulfillment containing the purchase, artifact, deed, vault, and destination; KoS bindings are idempotent and immutable |
@@ -43,3 +46,5 @@
 - Emergency refunds can conflict with irreversible off-chain fulfillment. They require a seven-day minimum delay and an incident runbook; production governance should use a longer audited delay.
 - Every chain other than Base Sepolia remains disabled for alpha until its token,
   portal lane, Samuel profile, and full drill are independently verified.
+- Safe contract code, Safe infrastructure contracts, EIP-1271 nested signing,
+  and guardian key custody remain external operational dependencies.

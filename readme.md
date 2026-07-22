@@ -42,7 +42,7 @@ npm run attest:activation -- --network baseSepolia
 
 `preflight:testnet` is read-only and deliberately requires
 `SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true`. It checks the pinned source SHA,
-RPC chain/router, deployer balance floor, Safe/timelock and Warp-portal runtime
+RPC chain/router, deployer balance floor, three-Safe authority/timelock and Warp-portal runtime
 code, the immutable USDC runtime contract and six-decimal interface,
 all gateway constructor inputs, the 12-confirmation policy, and a fresh
 owner-only evidence output. It prevents the deployment command from reaching a
@@ -69,10 +69,23 @@ SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT=/secure/omnichain/base-sepolia-deployment.js
 npm run deploy -- --network baseSepolia
 ```
 
-`deploy:governance` deterministically deploys a 2-of-3 Safe from the verified
-three-administrator ceremony roster and a self-administered 24-hour timelock.
-The Safe is the immutable payout address and sole proposer, canceller, and
-executor. `GOVERNANCE_ADDRESS` is always the timelock, never the Safe.
+`deploy:governance` deterministically deploys three Safe 1.4.1 accounts from
+the verified ceremony roster. The Owner Identity Safe is 1-of-1 slot 0, the
+Coadmin Safe is 1-of-2 slots 1 and 2, and the root Safe is 2-of-2 over those
+two child Safes. Consequently every root action requires slot 0 plus either
+coadmin; slots 1 and 2 cannot act together without slot 0. The root Safe is the
+immutable payout address and sole proposer, canceller, and executor of the
+self-administered 24-hour timelock. `GOVERNANCE_ADDRESS` is always the
+timelock and `ROOT_SAFE_ADDRESS` is always the root Safe.
+
+The same deployment installs a distinct immutable guard on every Safe and a
+recovery module on the Owner Identity Safe. The guards block direct owner,
+threshold, module, fallback, and guard reconfiguration while permitting normal
+calls and the official Safe `SignMessageLib`. Recovery requires initiation by
+a separate secp256k1 guardian, approval by both coadmins, explicit acceptance by the replacement
+owner, and a seven-day delay. A separate 48-byte BLS recovery public key is
+committed in the immutable deployment evidence for the corresponding Chia
+recovery runbook; neither guardian may reuse an administrator key.
 
 The rail deployment creates a dedicated gateway and spoke, configures the
 trusted spoke while the deployer is still owner, and starts two-step ownership
@@ -95,8 +108,12 @@ SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_OUTPUT=/secure/omnichain/ownership-intent.js
 npm run prepare:ownership -- --network baseSepolia
 ```
 
-Submit the generated `scheduleTransaction` through the 2-of-3 Safe, wait at
-least 86,400 seconds, then submit `executeTransaction` through that same Safe.
+For each root transaction, have the Owner Identity Safe approve the exact root
+Safe message through the official `SignMessageLib`, then have either coadmin do
+the same through the Coadmin Safe. Submit both EIP-1271 contract signatures to
+the 2-of-2 root Safe. Wait at least 86,400 seconds between the timelock schedule
+and execution transactions; both transactions use the same child-Safe approval
+flow.
 Only after the operation is complete may activation evidence be produced:
 
 ```bash
@@ -106,7 +123,7 @@ SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_PATH=/secure/omnichain/ownership-intent.json
 SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_OUTPUT=/secure/omnichain/activation.json \
 SOLSLOT_OMNICHAIN_GATEWAY_PROFILE=bse \
 GOVERNANCE_ADDRESS=0x... \
-SAFE_ADDRESS=0x... \
+ROOT_SAFE_ADDRESS=0x... \
 npm run attest:activation -- --network baseSepolia
 ```
 
@@ -114,6 +131,13 @@ The activation attestation requires the recorded timelock operation to be done,
 then re-reads the live `owner()` and runtime bytecode of
 the gateway and spoke, binds both to the immutable deployment artifact, and
 refuses pending or mismatched ownership. It is also non-overwritable.
+
+RC19 authority evidence is intentionally breaking: governance uses schema v2,
+while preflight, rail deployment, ownership intent, and activation use schemas
+v3, v3, v2, and v3 respectively. Schema-v1 flat-Safe authority and schema-v2
+rail deployment files are rejected. See
+[`security/EVM_AUTHORITY.md`](security/EVM_AUTHORITY.md) for signing and
+recovery procedures.
 
 Run the read-only escrow event relayer as a separate service after activation:
 

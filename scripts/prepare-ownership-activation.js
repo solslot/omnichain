@@ -6,11 +6,11 @@ async function main() {
     process.env.SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH,
     "deployment",
   );
-  if (deployment.schemaVersion !== 2 || deployment.network !== network.name) {
+  if (deployment.schemaVersion !== 3 || deployment.network !== network.name) {
     throw new Error("deployment evidence does not match the active network");
   }
   const timelockAddress = deployment.configuration.governanceTimelock;
-  const safeAddress = deployment.configuration.governanceSafe;
+  const rootSafeAddress = deployment.configuration.governanceRootSafe;
   const timelock = await ethers.getContractAt("SolslotAlphaTimelock", timelockAddress);
   if (await timelock.getMinDelay() !== 86400n) throw new Error("timelock delay is not 24 hours");
   const ownable = new ethers.Interface(["function acceptOwnership()"]);
@@ -39,12 +39,12 @@ async function main() {
     salt,
   ]);
   const evidence = withArtifactHash({
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "solslot-omnichain-ownership-activation-intent",
     deploymentArtifactHash: deployment.artifactHash,
     network: network.name,
     chainId: deployment.chainId,
-    safe: safeAddress,
+    rootSafe: rootSafeAddress,
     timelock: timelockAddress,
     operationId,
     minimumDelaySeconds: "86400",

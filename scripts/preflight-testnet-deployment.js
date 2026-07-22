@@ -41,7 +41,7 @@ async function main() {
   const governance = await validateGovernanceEvidence({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
-    safe: settings.safe,
+    rootSafe: settings.rootSafe,
     timelock: settings.governance,
   });
   if (!settings.gatewaySettings) throw new Error("alpha preflight must deploy a dedicated gateway");
@@ -50,7 +50,7 @@ async function main() {
     settings.gatewaySettings,
   );
   const evidence = withArtifactHash({
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "solslot-omnichain-testnet-deployment-preflight",
     sourceSha,
     network: network.name,
@@ -65,7 +65,7 @@ async function main() {
       payout: settings.payout,
       ccipRouter: config.router,
       governance: settings.governance,
-      safe: settings.safe,
+      rootSafe: settings.rootSafe,
       usdc: settings.usdc,
       callbackGas: settings.callbackGas.toString(),
       emergencyDelay: settings.emergencyDelay.toString(),

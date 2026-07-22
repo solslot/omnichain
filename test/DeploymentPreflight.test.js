@@ -34,7 +34,7 @@ function networks() {
 function environment(overrides = {}) {
   return {
     PAYOUT_ADDRESS: address("12"),
-    SAFE_ADDRESS: address("12"),
+    ROOT_SAFE_ADDRESS: address("12"),
     USDC_ADDRESS: address("13"),
     GOVERNANCE_ADDRESS: address("15"),
     CCIP_CALLBACK_GAS: "500000",
@@ -64,7 +64,7 @@ function provider(overrides = {}) {
 
 function preflightRecord(settings, inspection, overrides = {}) {
   return withArtifactHash({
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "solslot-omnichain-testnet-deployment-preflight",
     sourceSha: "a".repeat(40),
     network: "baseSepolia",
@@ -77,7 +77,7 @@ function preflightRecord(settings, inspection, overrides = {}) {
       ccipRouter: configuration().router,
       payout: settings.payout,
       governance: settings.governance,
-      safe: settings.safe,
+      rootSafe: settings.rootSafe,
       usdc: settings.usdc,
       warpPortal: settings.gatewaySettings.warpPortal,
       callbackGas: settings.callbackGas.toString(),
@@ -127,11 +127,11 @@ describe("testnet deployment preflight", function () {
 
   it("requires the payout Safe and timelock to be distinct", function () {
     expect(() => deploymentSettings(
-      environment({ SAFE_ADDRESS: address("14") }),
+      environment({ ROOT_SAFE_ADDRESS: address("14") }),
       configuration(),
       "baseSepolia",
       networks(),
-    )).to.throw("PAYOUT_ADDRESS must equal SAFE_ADDRESS");
+    )).to.throw("PAYOUT_ADDRESS must equal ROOT_SAFE_ADDRESS");
     expect(() => deploymentSettings(
       environment({ GOVERNANCE_ADDRESS: address("12") }),
       configuration(),

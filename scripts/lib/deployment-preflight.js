@@ -56,9 +56,9 @@ function deploymentSettings(environment, config, networkName, networks) {
   const payout = requiredAddress(environment, "PAYOUT_ADDRESS");
   const usdc = requiredAddress(environment, "USDC_ADDRESS", config.stablecoins?.usdc);
   const governance = requiredAddress(environment, "GOVERNANCE_ADDRESS");
-  const safe = requiredAddress(environment, "SAFE_ADDRESS");
-  if (payout !== safe) throw new Error("PAYOUT_ADDRESS must equal SAFE_ADDRESS for testnet alpha");
-  if (governance === safe) throw new Error("GOVERNANCE_ADDRESS must be the timelock, not the Safe");
+  const rootSafe = requiredAddress(environment, "ROOT_SAFE_ADDRESS");
+  if (payout !== rootSafe) throw new Error("PAYOUT_ADDRESS must equal ROOT_SAFE_ADDRESS for testnet alpha");
+  if (governance === rootSafe) throw new Error("GOVERNANCE_ADDRESS must be the timelock, not the root Safe");
   const callbackGas = requiredUint(environment, "CCIP_CALLBACK_GAS", "500000", 1n);
   const emergencyDelay = requiredUint(environment, "EMERGENCY_REFUND_DELAY_SECONDS", "604800", 604800n);
   const confirmations = networkName === "hardhat"
@@ -94,7 +94,7 @@ function deploymentSettings(environment, config, networkName, networks) {
     payout,
     usdc,
     governance,
-    safe,
+    rootSafe,
     callbackGas,
     emergencyDelay,
     confirmations,
@@ -129,11 +129,11 @@ async function inspectDeploymentReadiness({
   if (Number(network.chainId) !== config.chainId) {
     throw new Error("deployment RPC chain does not match configured network");
   }
-  const [router, usdc, governance, safe] = await Promise.all([
+  const [router, usdc, governance, rootSafe] = await Promise.all([
     runtimeCode(provider, config.router, "CCIP router"),
     runtimeCode(provider, settings.usdc, "USDC"),
     runtimeCode(provider, settings.governance, "governance"),
-    runtimeCode(provider, settings.safe, "Safe"),
+    runtimeCode(provider, settings.rootSafe, "root Safe"),
   ]);
   const usdcDecimals = await tokenDecimals(provider, settings.usdc);
   if (usdcDecimals !== 6) {
@@ -154,7 +154,7 @@ async function inspectDeploymentReadiness({
     minimumDeployerBalanceWei: minimumDeployerBalanceWei.toString(),
     tokenDecimals: { usdc: usdcDecimals },
     runtimeCodeHashes: Object.fromEntries(
-      [router, usdc, governance, safe, ...additional].map((item) => [item.address, item.codeHash]),
+      [router, usdc, governance, rootSafe, ...additional].map((item) => [item.address, item.codeHash]),
     ),
   };
 }
@@ -193,7 +193,7 @@ function validatePreflightEvidence({
   }
   const preflight = readEvidence(evidencePath, "preflight");
   if (
-    preflight.schemaVersion !== 2 ||
+    preflight.schemaVersion !== 3 ||
     preflight.kind !== "solslot-omnichain-testnet-deployment-preflight" ||
     preflight.sourceSha !== sourceSha ||
     preflight.network !== networkName ||
@@ -217,7 +217,7 @@ function validatePreflightEvidence({
     ccipRouter: config.router,
     payout: settings.payout,
     governance: settings.governance,
-    safe: settings.safe,
+    rootSafe: settings.rootSafe,
     usdc: settings.usdc,
     ...(settings.deployGateway
       ? { warpPortal: settings.gatewaySettings.warpPortal }
