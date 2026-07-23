@@ -69,7 +69,10 @@ async function main() {
   if (!settings.gatewaySettings) throw new Error("alpha deployment must create a dedicated gateway");
   const samuelEvidence = validateSamuelCoordinates(
     process.env.SOLSLOT_SAMUEL_COORDINATE_EVIDENCE_PATH,
-    settings.gatewaySettings,
+    {
+      ...settings.gatewaySettings,
+      predictedGatewayAddress: inspection.predictedGatewayAddress,
+    },
   );
   const preflight = validatePreflightEvidence({
     evidencePath: process.env.SOLSLOT_OMNICHAIN_PREFLIGHT_EVIDENCE_PATH,
@@ -124,6 +127,16 @@ async function main() {
     gatewayContract = await ethers.deployContract("SolomonWarpGateway", gatewayArgs);
     await gatewayContract.waitForDeployment();
     gatewayAddress = await gatewayContract.getAddress();
+    if (
+      ethers.getAddress(gatewayAddress) !==
+      ethers.getAddress(inspection.predictedGatewayAddress) ||
+      ethers.getAddress(gatewayAddress) !==
+      ethers.getAddress(samuelEvidence.baseSepolia.solomonGatewayAddress)
+    ) {
+      throw new Error(
+        "deployed gateway address does not match Samuel coordinate evidence",
+      );
+    }
     gatewayDeployment = await confirmedReceipt(gatewayContract, confirmations, "gateway");
     await verify(gatewayAddress, gatewayArgs);
     gatewayOwnershipTransfer = await confirmedCall(
@@ -175,7 +188,7 @@ async function main() {
   }
 
   const evidence = withArtifactHash({
-    schemaVersion: 3,
+    schemaVersion: 4,
     protocolVersion: "solslot-v2",
     rail: "ccip-warp-escrow",
     sourceSha,
@@ -199,6 +212,8 @@ async function main() {
       payoutAddress: payout,
       governanceRootSafe: rootSafe,
       governanceTimelock: governance,
+      samuelSourceSha: settings.gatewaySettings.samuelSourceSha,
+      predictedGatewayAddress: inspection.predictedGatewayAddress,
       ownershipAccepted: false,
     },
     deploymentTransactions: {

@@ -48,6 +48,7 @@ function environment(overrides = {}) {
     VOUCHER_RESULT_AUTHORIZATION_MOD_HASH: `0x${"19".repeat(32)}`,
     VOUCHER_BURN_INNER_HASH: `0x${"1a".repeat(32)}`,
     SOLSLOT_PROTOCOL_SOURCE_SHA: "a".repeat(40),
+    SOLSLOT_SAMUEL_SOURCE_SHA: "b".repeat(40),
     MAX_WARP_TOLL_WEI: "1",
     MAX_CCIP_FEE_WEI: "1",
     ...overrides,
@@ -61,13 +62,14 @@ function provider(overrides = {}) {
     getCode: async () => "0x6001600055",
     call: async () => decimals.encodeFunctionResult("decimals", [6]),
     getBalance: async () => 1_000_000_000_000_000_000n,
+    getTransactionCount: async () => 7,
     ...overrides,
   };
 }
 
 function preflightRecord(settings, inspection, overrides = {}) {
   return withArtifactHash({
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "solslot-omnichain-testnet-deployment-preflight",
     sourceSha: "a".repeat(40),
     network: "baseSepolia",
@@ -83,10 +85,12 @@ function preflightRecord(settings, inspection, overrides = {}) {
       rootSafe: settings.rootSafe,
       usdc: settings.usdc,
       warpPortal: settings.gatewaySettings.warpPortal,
+      predictedGatewayAddress: inspection.predictedGatewayAddress,
       callbackGas: settings.callbackGas.toString(),
       emergencyDelay: settings.emergencyDelay.toString(),
       confirmations: settings.confirmations,
       protocolSourceSha: settings.gatewaySettings.protocolSourceSha,
+      samuelSourceSha: settings.gatewaySettings.samuelSourceSha,
       voucherResultAuthorizationMod:
         settings.gatewaySettings.voucherResultAuthorizationMod,
       voucherBurnInner: settings.gatewaySettings.voucherBurnInner,
@@ -120,6 +124,10 @@ describe("testnet deployment preflight", function () {
       minimumDeployerBalanceWei: "1",
     });
     expect(inspected.tokenDecimals).to.deep.equal({ usdc: 6 });
+    expect(inspected.deployerNonce).to.equal(7);
+    expect(inspected.predictedGatewayAddress).to.equal(
+      ethers.getCreateAddress({ from: address("19"), nonce: 7 }),
+    );
     expect(settings.hubChainSelector).to.equal(10344971235874465080n);
   });
 
@@ -207,6 +215,17 @@ describe("testnet deployment preflight", function () {
     }));
     expect(() => validatePreflightEvidence({ ...input, evidencePath: stale }))
       .to.throw("stale");
+
+    const changedNonce = {
+      ...inspection,
+      deployerNonce: inspection.deployerNonce + 1,
+      predictedGatewayAddress: ethers.getCreateAddress({
+        from: inspection.deployer,
+        nonce: inspection.deployerNonce + 1,
+      }),
+    };
+    expect(() => validatePreflightEvidence({ ...input, inspection: changedNonce }))
+      .to.throw("predicted gateway has changed");
 
     const changedInspection = {
       ...inspection,

@@ -47,10 +47,13 @@ async function main() {
   if (!settings.gatewaySettings) throw new Error("alpha preflight must deploy a dedicated gateway");
   const samuel = validateSamuelCoordinates(
     process.env.SOLSLOT_SAMUEL_COORDINATE_EVIDENCE_PATH,
-    settings.gatewaySettings,
+    {
+      ...settings.gatewaySettings,
+      predictedGatewayAddress: inspection.predictedGatewayAddress,
+    },
   );
   const evidence = withArtifactHash({
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: "solslot-omnichain-testnet-deployment-preflight",
     sourceSha,
     network: network.name,
@@ -73,7 +76,9 @@ async function main() {
       ...(settings.gatewaySettings
         ? {
           warpPortal: settings.gatewaySettings.warpPortal,
+          predictedGatewayAddress: inspection.predictedGatewayAddress,
           protocolSourceSha: settings.gatewaySettings.protocolSourceSha,
+          samuelSourceSha: settings.gatewaySettings.samuelSourceSha,
           voucherResultAuthorizationMod:
             settings.gatewaySettings.voucherResultAuthorizationMod,
           voucherBurnInner: settings.gatewaySettings.voucherBurnInner,

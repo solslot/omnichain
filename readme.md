@@ -44,13 +44,16 @@ npm run attest:activation -- --network baseSepolia
 `SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true`. It checks the pinned source SHA,
 RPC chain/router, deployer balance floor, three-Safe authority/timelock and Warp-portal runtime
 code, the immutable USDC runtime contract and six-decimal interface,
-all gateway constructor inputs, the 12-confirmation policy, and a fresh
+all gateway constructor inputs, the exact Samuel source SHA, the pending
+deployer nonce, the gateway address predicted from that nonce, the
+12-confirmation policy, and a fresh
 owner-only evidence output. It prevents the deployment command from reaching a
 gateway or spoke transaction until those same contract-readiness checks pass.
 
 ```bash
 SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true \
 SOLSLOT_OMNICHAIN_SOURCE_SHA=$(git rev-parse HEAD) \
+SOLSLOT_SAMUEL_SOURCE_SHA=<exact-reviewed-samuel-sha> \
 SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
 SOLSLOT_SAMUEL_COORDINATE_EVIDENCE_PATH=/secure/omnichain/samuel-coordinates.json \
 SOLSLOT_OMNICHAIN_MIN_DEPLOYER_WEI=10000000000000000 \
@@ -90,7 +93,10 @@ recovery runbook; neither guardian may reuse an administrator key.
 The rail deployment creates a dedicated gateway and spoke, configures the
 trusted spoke while the deployer is still owner, and starts two-step ownership
 transfer to the timelock. It rejects old mainnet Warp coordinates and requires
-the fresh 2-of-3 Samuel coordinate artifact.
+the fresh 2-of-3 Samuel coordinate artifact. The artifact's curried Chia return
+puzzle must name the gateway address predicted from the deployment signer and
+pending nonce. Deployment aborts if that nonce changes or the deployed address
+does not match the evidence.
 
 Every deployment also requires `SOLSLOT_OMNICHAIN_SOURCE_SHA` to match a clean
 checkout, `SOLSLOT_OMNICHAIN_CONFIRMATIONS` of at least 12 outside Hardhat,

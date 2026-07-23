@@ -72,6 +72,12 @@ function deploymentSettings(environment, config, networkName, networks) {
   if (!/^[0-9a-f]{40}$/.test(protocolSourceSha)) {
     throw new Error("SOLSLOT_PROTOCOL_SOURCE_SHA must be an exact git SHA");
   }
+  const samuelSourceSha = deployGateway
+    ? String(environment.SOLSLOT_SAMUEL_SOURCE_SHA || "").toLowerCase()
+    : null;
+  if (deployGateway && !/^[0-9a-f]{40}$/.test(samuelSourceSha)) {
+    throw new Error("SOLSLOT_SAMUEL_SOURCE_SHA must be an exact git SHA");
+  }
   const hubName = defaultHubName(config, networkName);
   const hub = networks[hubName];
   if (!hub) throw new Error(`Missing hub configuration for ${hubName}`);
@@ -101,6 +107,7 @@ function deploymentSettings(environment, config, networkName, networks) {
         32,
       ),
       protocolSourceSha,
+      samuelSourceSha,
       maxWarpTollWei: requiredUint(environment, "MAX_WARP_TOLL_WEI", undefined, 1n),
       maxCcipFeeWei: requiredUint(environment, "MAX_CCIP_FEE_WEI", undefined, 1n),
     }
@@ -158,15 +165,26 @@ async function inspectDeploymentReadiness({
     ? [await runtimeCode(provider, settings.gatewaySettings.warpPortal, "Warp portal")]
     : [await runtimeCode(provider, settings.gateway, "hub gateway")];
   const deployerAddress = ethers.getAddress(deployer);
-  const deployerBalanceWei = await provider.getBalance(deployerAddress);
+  const [deployerBalanceWei, deployerNonce] = await Promise.all([
+    provider.getBalance(deployerAddress),
+    provider.getTransactionCount(deployerAddress, "pending"),
+  ]);
   if (deployerBalanceWei < minimumDeployerBalanceWei) {
     throw new Error("deployer balance is below the configured deployment minimum");
   }
+  if (!Number.isSafeInteger(deployerNonce) || deployerNonce < 0) {
+    throw new Error("deployer pending nonce is invalid");
+  }
+  const predictedGatewayAddress = settings.deployGateway
+    ? ethers.getCreateAddress({ from: deployerAddress, nonce: deployerNonce })
+    : null;
   return {
     chainId: Number(network.chainId),
     deployer: deployerAddress,
     deployerBalanceWei: deployerBalanceWei.toString(),
     minimumDeployerBalanceWei: minimumDeployerBalanceWei.toString(),
+    deployerNonce,
+    predictedGatewayAddress,
     tokenDecimals: { usdc: usdcDecimals },
     runtimeCodeHashes: Object.fromEntries(
       [router, usdc, governance, rootSafe, ...additional].map((item) => [item.address, item.codeHash]),
@@ -208,7 +226,7 @@ function validatePreflightEvidence({
   }
   const preflight = readEvidence(evidencePath, "preflight");
   if (
-    preflight.schemaVersion !== 3 ||
+    preflight.schemaVersion !== 4 ||
     preflight.kind !== "solslot-omnichain-testnet-deployment-preflight" ||
     preflight.sourceSha !== sourceSha ||
     preflight.network !== networkName ||
@@ -254,6 +272,7 @@ function validatePreflightEvidence({
     settings.deployGateway &&
     (
       declared.protocolSourceSha !== settings.gatewaySettings.protocolSourceSha ||
+      declared.samuelSourceSha !== settings.gatewaySettings.samuelSourceSha ||
       String(declared.voucherResultAuthorizationMod || "").toLowerCase() !==
         settings.gatewaySettings.voucherResultAuthorizationMod.toLowerCase() ||
       String(declared.voucherBurnInner || "").toLowerCase() !==
@@ -262,6 +281,18 @@ function validatePreflightEvidence({
   ) {
     throw new Error(
       "preflight evidence protocol voucher puzzles do not match this deployment",
+    );
+  }
+  if (
+    !ethers.isAddress(declared.predictedGatewayAddress) ||
+    ethers.getAddress(declared.predictedGatewayAddress) !==
+      inspection.predictedGatewayAddress ||
+    preflight.inspection?.deployerNonce !== inspection.deployerNonce ||
+    preflight.inspection?.predictedGatewayAddress !==
+      inspection.predictedGatewayAddress
+  ) {
+    throw new Error(
+      "preflight evidence deployer nonce or predicted gateway has changed",
     );
   }
   if (preflight.inspection?.tokenDecimals?.usdc !== 6) {
