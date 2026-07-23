@@ -71,7 +71,13 @@ async function main() {
       emergencyDelay: settings.emergencyDelay.toString(),
       confirmations: settings.confirmations,
       ...(settings.gatewaySettings
-        ? { warpPortal: settings.gatewaySettings.warpPortal }
+        ? {
+          warpPortal: settings.gatewaySettings.warpPortal,
+          protocolSourceSha: settings.gatewaySettings.protocolSourceSha,
+          voucherResultAuthorizationMod:
+            settings.gatewaySettings.voucherResultAuthorizationMod,
+          voucherBurnInner: settings.gatewaySettings.voucherBurnInner,
+        }
         : { hubGateway: settings.gateway }),
     },
     inspection,

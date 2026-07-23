@@ -68,6 +68,10 @@ function deploymentSettings(environment, config, networkName, networks) {
     throw new Error("SOLSLOT_OMNICHAIN_CONFIRMATIONS must be a positive safe integer");
   }
   const deployGateway = environment.DEPLOY_GATEWAY === "true";
+  const protocolSourceSha = String(environment.SOLSLOT_PROTOCOL_SOURCE_SHA || "").toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(protocolSourceSha)) {
+    throw new Error("SOLSLOT_PROTOCOL_SOURCE_SHA must be an exact git SHA");
+  }
   const hubName = defaultHubName(config, networkName);
   const hub = networks[hubName];
   if (!hub) throw new Error(`Missing hub configuration for ${hubName}`);
@@ -86,6 +90,17 @@ function deploymentSettings(environment, config, networkName, networks) {
       warpChiaChain: requiredBytes(environment, "WARP_CHIA_CHAIN", 3),
       samuelBridgingPuzzle: requiredBytes(environment, "SAMUEL_BRIDGING_PUZZLE", 32),
       samuelReturnPuzzle: requiredBytes(environment, "SAMUEL_RETURN_PUZZLE", 32),
+      voucherResultAuthorizationMod: requiredBytes(
+        environment,
+        "VOUCHER_RESULT_AUTHORIZATION_MOD_HASH",
+        32,
+      ),
+      voucherBurnInner: requiredBytes(
+        environment,
+        "VOUCHER_BURN_INNER_HASH",
+        32,
+      ),
+      protocolSourceSha,
       maxWarpTollWei: requiredUint(environment, "MAX_WARP_TOLL_WEI", undefined, 1n),
       maxCcipFeeWei: requiredUint(environment, "MAX_CCIP_FEE_WEI", undefined, 1n),
     }
@@ -234,6 +249,20 @@ function validatePreflightEvidence({
     declared.confirmations !== settings.confirmations
   ) {
     throw new Error("preflight evidence numeric settings do not match this deployment");
+  }
+  if (
+    settings.deployGateway &&
+    (
+      declared.protocolSourceSha !== settings.gatewaySettings.protocolSourceSha ||
+      String(declared.voucherResultAuthorizationMod || "").toLowerCase() !==
+        settings.gatewaySettings.voucherResultAuthorizationMod.toLowerCase() ||
+      String(declared.voucherBurnInner || "").toLowerCase() !==
+        settings.gatewaySettings.voucherBurnInner.toLowerCase()
+    )
+  ) {
+    throw new Error(
+      "preflight evidence protocol voucher puzzles do not match this deployment",
+    );
   }
   if (preflight.inspection?.tokenDecimals?.usdc !== 6) {
     throw new Error("preflight evidence USDC decimals are invalid");

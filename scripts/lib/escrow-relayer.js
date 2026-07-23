@@ -6,8 +6,11 @@ const { readEvidence } = require("./deployment-evidence");
 const MAX_STATE_BYTES = 16 * 1024;
 const PAYMENT_DEPOSITED_ABI = [
   "event PaymentDeposited(bytes32 indexed globalPaymentId, bytes32 indexed localPaymentId, address indexed depositor, address settlementToken, uint256 amount, uint64 hubChainSelector, address hubGateway, bytes32 requestMessageId, uint256 bridgeFee)",
+  "event ResultReceived(bytes32 indexed globalPaymentId, bytes32 indexed resultMessageId, bytes32 indexed warpNonce, bool succeeded)",
+  "event PaymentSettled(bytes32 indexed globalPaymentId, address indexed recipient, address settlementToken, uint256 amount, bool succeeded, bool emergency)",
   "function getDeposit(bytes32 globalPaymentId) view returns ((address depositor,address settlementToken,bytes32 localPaymentId,bytes32 purchaseId,bytes32 artifactHash,bytes32 collectionId,bytes32 deedLauncherId,bytes32 vaultLauncherId,bytes32 destinationPuzzle,bytes32 requestMessageId,bytes32 resultMessageId,bytes32 warpNonce,uint256 amount,uint256 quantity,uint64 hubChainSelector,address hubGateway,uint64 createdAt,uint64 quoteExpiresAt,uint8 status,bool succeeded))",
   "function deriveGlobalPaymentId(address token,bytes32 localPaymentId,bytes32 purchaseId,bytes32 artifactHash) view returns (bytes32)",
+  "function settle(bytes32 globalPaymentId)",
 ];
 
 function requiredHex(value, bytes, label) {
@@ -15,6 +18,13 @@ function requiredHex(value, bytes, label) {
     throw new Error(`${label} must be a non-zero ${bytes}-byte hex value`);
   }
   return value.toLowerCase();
+}
+
+function requiredAddress(value, label) {
+  if (!ethers.isAddress(value) || value === ethers.ZeroAddress) {
+    throw new Error(`${label} must be a non-zero EVM address`);
+  }
+  return ethers.getAddress(value);
 }
 
 function safeInteger(value, label) {
@@ -36,6 +46,9 @@ function escrowMessageFromDeposit(globalPaymentId, deposit, gatewayProfile) {
   return {
     gatewayProfile,
     globalPaymentId: requiredHex(globalPaymentId, 32, "globalPaymentId"),
+    localPaymentId: requiredHex(deposit.localPaymentId, 32, "localPaymentId"),
+    depositor: requiredAddress(deposit.depositor, "depositor"),
+    settlementToken: requiredAddress(deposit.settlementToken, "settlementToken"),
     purchaseId: requiredHex(deposit.purchaseId, 32, "purchaseId"),
     artifactHash: requiredHex(deposit.artifactHash, 32, "artifactHash"),
     amount: safeInteger(deposit.amount, "amount"),
@@ -225,6 +238,16 @@ async function runOnce(
       const parsed = spoke.interface.parseLog(log);
       const globalPaymentId = parsed.args.globalPaymentId;
       const deposit = await spoke.getDeposit(globalPaymentId);
+      if (
+        requiredHex(parsed.args.localPaymentId, 32, "event localPaymentId")
+          !== requiredHex(deposit.localPaymentId, 32, "deposit localPaymentId")
+        || requiredAddress(parsed.args.depositor, "event depositor")
+          !== requiredAddress(deposit.depositor, "deposit depositor")
+        || requiredAddress(parsed.args.settlementToken, "event settlementToken")
+          !== requiredAddress(deposit.settlementToken, "deposit settlementToken")
+      ) {
+        throw new Error("confirmed escrow event differs from the stored deposit");
+      }
       if (depositDisposition(deposit) === "skip-failed") {
         skipped += 1;
         continue;
@@ -248,6 +271,7 @@ async function runOnce(
             transactionHash: log.transactionHash,
             blockNumber: log.blockNumber,
             blockHash: log.blockHash,
+            blockTimestamp: safeInteger(block.timestamp, "block timestamp"),
             logIndex: log.index,
             confirmations: latestBlock - log.blockNumber + 1,
           },
