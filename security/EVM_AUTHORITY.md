@@ -1,4 +1,4 @@
-# RC19 EVM Authority
+# RC20 EVM Authority
 
 ## Authority graph
 
@@ -19,9 +19,10 @@ off-chain convention.
 For one root transaction:
 
 1. Produce the exact root Safe transaction and hash from reviewed release evidence.
-2. Slot 0 records approval of that hash through the Owner Identity Safe using the official Safe `SignMessageLib`.
-3. Slot 1 or slot 2 records approval through the Coadmin Safe.
-4. Assemble the two EIP-1271 contract signatures and submit the root transaction.
+2. Slot 0 signs the EIP-712 `SafeMessage(bytes)` bound to the Owner Identity Safe.
+3. Slot 1 or slot 2 signs the independently domain-separated message bound to the Coadmin Safe.
+4. Recover both administrator addresses, assemble their signatures as the two
+   child-Safe EIP-1271 contract signatures, and submit the root transaction.
 5. For a timelocked operation, repeat the child approvals once for `schedule` and again after 86,400 seconds for `execute`.
 
 Never replace a child-Safe contract signature with an EOA signature. The root
@@ -68,11 +69,12 @@ above.
 ## Evidence versions
 
 - Governance deployment: schema v2.
-- Omnichain preflight: schema v3.
-- Omnichain deployment: schema v3.
+- Omnichain preflight: schema v5.
+- Omnichain deployment: schema v5.
 - Ownership activation intent: schema v2.
+- Safe authority operation: schema v1.
 - Activation attestation: schema v3.
 
 The coordinator verifies canonical artifact hashes and cross-links every file.
-Legacy flat 2-of-3 Safe evidence is unsupported. A fresh RC19 deployment is
+Legacy flat 2-of-3 Safe evidence is unsupported. A fresh RC20 deployment is
 required; no RC17/RC18 ownership coordinate may be reused.

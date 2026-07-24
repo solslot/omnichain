@@ -19,6 +19,8 @@
     "deploy:governance": "hardhat run scripts/deploy-alpha-governance.js",
     "attest:activation": "hardhat run scripts/attest-omnichain-activation.js",
     "prepare:ownership": "hardhat run scripts/prepare-ownership-activation.js",
+    "prepare:ownership-safe": "hardhat run scripts/prepare-ownership-safe-operation.js",
+    "submit:ownership-safe": "hardhat run scripts/submit-ownership-safe-operation.js",
     "relay:escrow": "hardhat run scripts/relay-escrow-deposits.js",
     "rehearse:escrow": "hardhat run scripts/rehearse-escrow-settlement.js",
     "configure:gateway": "hardhat run scripts/configure-gateway.js",

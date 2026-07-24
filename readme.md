@@ -37,6 +37,8 @@ npm run deploy:governance -- --network baseSepolia
 npm run preflight:testnet -- --network baseSepolia
 npm run deploy -- --network baseSepolia
 npm run prepare:ownership -- --network baseSepolia
+npm run prepare:ownership-safe -- --network baseSepolia
+npm run submit:ownership-safe -- --network baseSepolia
 npm run attest:activation -- --network baseSepolia
 ```
 
@@ -110,16 +112,35 @@ reviewed. After the governance timelock accepts both contract transfers, run:
 
 ```bash
 SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH=/secure/omnichain/deployment.json \
+SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
 SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_OUTPUT=/secure/omnichain/ownership-intent.json \
 npm run prepare:ownership -- --network baseSepolia
 ```
 
-For each root transaction, have the Owner Identity Safe approve the exact root
-Safe message through the official `SignMessageLib`, then have either coadmin do
-the same through the Coadmin Safe. Submit both EIP-1271 contract signatures to
-the 2-of-2 root Safe. Wait at least 86,400 seconds between the timelock schedule
-and execution transactions; both transactions use the same child-Safe approval
-flow.
+Generate the exact root transaction and the two domain-separated child-Safe
+messages without broadcasting:
+
+```bash
+SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH=/secure/omnichain/deployment.json \
+SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
+SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_PATH=/secure/omnichain/ownership-intent.json \
+SOLSLOT_OWNERSHIP_AUTHORITY_PHASE=schedule \
+SOLSLOT_OWNERSHIP_SAFE_OPERATION_OUTPUT=/secure/omnichain/schedule-operation.json \
+npm run prepare:ownership-safe -- --network baseSepolia
+```
+
+Slot 0 signs the `owner_identity` typed message and either slot 1 or slot 2
+signs the `coadmin` typed message. Neither administrator signs the root
+transaction as an EOA: the relayer packages their signatures as the two child
+Safe EIP-1271 contract signatures. Store those signatures in a hashed,
+owner-only `solslot-safe-authority-approvals` record bound to the operation
+artifact, then submit it with `submit:ownership-safe`. The submit command
+re-derives the live root nonce and Safe transaction hash before relaying.
+
+Wait at least 86,400 seconds, regenerate the package with
+`SOLSLOT_OWNERSHIP_AUTHORITY_PHASE=execute`, collect two fresh child-Safe
+messages, and submit again. A schedule signature cannot authorize execution,
+and a nonce change invalidates the package.
 Only after the operation is complete may activation evidence be produced:
 
 ```bash
@@ -138,10 +159,10 @@ then re-reads the live `owner()` and runtime bytecode of
 the gateway and spoke, binds both to the immutable deployment artifact, and
 refuses pending or mismatched ownership. It is also non-overwritable.
 
-RC19 authority evidence is intentionally breaking: governance uses schema v2,
-while preflight, rail deployment, ownership intent, and activation use schemas
-v3, v3, v2, and v3 respectively. Schema-v1 flat-Safe authority and schema-v2
-rail deployment files are rejected. See
+RC20 authority evidence is intentionally breaking: governance uses schema v2,
+while preflight, rail deployment, ownership intent, Safe authority operation,
+and activation use schemas v5, v5, v2, v1, and v3 respectively. Schema-v1
+flat-Safe authority and pre-RC20 rail deployment files are rejected. See
 [`security/EVM_AUTHORITY.md`](security/EVM_AUTHORITY.md) for signing and
 recovery procedures.
 
