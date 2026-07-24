@@ -9,10 +9,12 @@
   },
   "scripts": {
     "build": "hardhat compile",
+    "build:warp-artifacts": "node scripts/build-pinned-warp-artifacts.js",
     "clean": "hardhat clean",
     "test": "hardhat test test/*.test.js",
     "test:coverage": "hardhat coverage",
     "deploy": "hardhat run scripts/deploy-omnichain.js",
+    "deploy:warp-portal": "hardhat run scripts/deploy-warp-portal.js",
     "preflight:testnet": "hardhat run scripts/preflight-testnet-deployment.js",
     "deploy:governance": "hardhat run scripts/deploy-alpha-governance.js",
     "attest:activation": "hardhat run scripts/attest-omnichain-activation.js",

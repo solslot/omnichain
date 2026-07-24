@@ -18,6 +18,7 @@ const {
 } = require("./lib/deployment-preflight");
 const { validateGovernanceEvidence } = require("./lib/governance-deployment");
 const { validateSamuelCoordinates } = require("./lib/samuel-coordinates");
+const { validateWarpPortalEvidence } = require("./lib/warp-portal-deployment");
 
 async function verify(address, constructorArguments) {
   if (process.env.VERIFY_CONTRACTS !== "true") return;
@@ -74,6 +75,15 @@ async function main() {
       predictedGatewayAddress: inspection.predictedGatewayAddress,
     },
   );
+  const warpPortalEvidence = await validateWarpPortalEvidence({
+    path: process.env.SOLSLOT_WARP_PORTAL_EVIDENCE_PATH,
+    provider: ethers.provider,
+    expectedPortal: settings.gatewaySettings.warpPortal,
+    expectedOmnichainSourceSha: sourceSha,
+    expectedRosterArtifactHash: samuelEvidence.validatorRosterArtifactHash,
+    expectedValidatorAddresses: samuelEvidence.validatorEvmAddresses,
+    minimumConfirmations: settings.confirmations,
+  });
   const preflight = validatePreflightEvidence({
     evidencePath: process.env.SOLSLOT_OMNICHAIN_PREFLIGHT_EVIDENCE_PATH,
     sourceSha,
@@ -93,6 +103,9 @@ async function main() {
   }
   if (preflight.samuelCoordinateArtifactHash !== samuelEvidence.artifactHash) {
     throw new Error("preflight Samuel evidence does not match this deployment");
+  }
+  if (preflight.warpPortalArtifactHash !== warpPortalEvidence.artifactHash) {
+    throw new Error("preflight Warp portal evidence does not match this deployment");
   }
   const {
     payout,
@@ -188,7 +201,7 @@ async function main() {
   }
 
   const evidence = withArtifactHash({
-    schemaVersion: 4,
+    schemaVersion: 5,
     protocolVersion: "solslot-v2",
     rail: "ccip-warp-escrow",
     sourceSha,
@@ -199,6 +212,7 @@ async function main() {
     preflightArtifactHash: preflight.artifactHash,
     governanceArtifactHash: governanceEvidence.artifactHash,
     samuelCoordinateArtifactHash: samuelEvidence.artifactHash,
+    warpPortalArtifactHash: warpPortalEvidence.artifactHash,
     contracts: {
       ccipRouter: config.router,
       gateway: gatewayAddress,

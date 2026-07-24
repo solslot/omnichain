@@ -69,7 +69,7 @@ function provider(overrides = {}) {
 
 function preflightRecord(settings, inspection, overrides = {}) {
   return withArtifactHash({
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "solslot-omnichain-testnet-deployment-preflight",
     sourceSha: "a".repeat(40),
     network: "baseSepolia",
@@ -78,6 +78,8 @@ function preflightRecord(settings, inspection, overrides = {}) {
     hubName: "baseSepolia",
     hubChainSelector: "10344971235874465080",
     deploymentMode: "new_gateway_and_spoke",
+    samuelCoordinateArtifactHash: `0x${"21".repeat(32)}`,
+    warpPortalArtifactHash: `0x${"22".repeat(32)}`,
     settings: {
       ccipRouter: configuration().router,
       payout: settings.payout,

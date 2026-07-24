@@ -14,6 +14,7 @@ const {
 } = require("./lib/deployment-preflight");
 const { validateGovernanceEvidence } = require("./lib/governance-deployment");
 const { validateSamuelCoordinates } = require("./lib/samuel-coordinates");
+const { validateWarpPortalEvidence } = require("./lib/warp-portal-deployment");
 
 async function main() {
   if (!isTestnet(network.name) || process.env.SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT !== "true") {
@@ -52,8 +53,17 @@ async function main() {
       predictedGatewayAddress: inspection.predictedGatewayAddress,
     },
   );
+  const warpPortal = await validateWarpPortalEvidence({
+    path: process.env.SOLSLOT_WARP_PORTAL_EVIDENCE_PATH,
+    provider: ethers.provider,
+    expectedPortal: settings.gatewaySettings.warpPortal,
+    expectedOmnichainSourceSha: sourceSha,
+    expectedRosterArtifactHash: samuel.validatorRosterArtifactHash,
+    expectedValidatorAddresses: samuel.validatorEvmAddresses,
+    minimumConfirmations: settings.confirmations,
+  });
   const evidence = withArtifactHash({
-    schemaVersion: 4,
+    schemaVersion: 5,
     kind: "solslot-omnichain-testnet-deployment-preflight",
     sourceSha,
     network: network.name,
@@ -64,6 +74,7 @@ async function main() {
     deploymentMode: settings.deployGateway ? "new_gateway_and_spoke" : "new_spoke",
     governanceArtifactHash: governance.artifactHash,
     samuelCoordinateArtifactHash: samuel.artifactHash,
+    warpPortalArtifactHash: warpPortal.artifactHash,
     settings: {
       payout: settings.payout,
       ccipRouter: config.router,

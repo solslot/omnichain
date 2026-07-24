@@ -14,12 +14,30 @@ interface IWarpMessageReceiver {
 
 contract MockWarpPortal is IWarpPortal {
     uint256 public override messageToll = 0.005 ether;
+    address public owner;
+    uint256 public signatureThreshold;
+    mapping(address => bool) public isSigner;
+    mapping(bytes3 => bool) public supportedChains;
     bytes3 public lastDestinationChain;
     bytes32 public lastDestination;
     bytes32[] private s_lastContents;
 
     function setMessageToll(uint256 newToll) external {
         messageToll = newToll;
+    }
+
+    function configureAuthority(
+        address newOwner,
+        address[] calldata signers,
+        uint256 threshold,
+        bytes3 supportedChain
+    ) external {
+        owner = newOwner;
+        signatureThreshold = threshold;
+        supportedChains[supportedChain] = true;
+        for (uint256 i = 0; i < signers.length; ++i) {
+            isSigner[signers[i]] = true;
+        }
     }
 
     function sendMessage(

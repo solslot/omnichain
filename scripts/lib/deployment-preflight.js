@@ -226,7 +226,7 @@ function validatePreflightEvidence({
   }
   const preflight = readEvidence(evidencePath, "preflight");
   if (
-    preflight.schemaVersion !== 4 ||
+    preflight.schemaVersion !== 5 ||
     preflight.kind !== "solslot-omnichain-testnet-deployment-preflight" ||
     preflight.sourceSha !== sourceSha ||
     preflight.network !== networkName ||
@@ -237,6 +237,15 @@ function validatePreflightEvidence({
     preflight.deploymentMode !== (settings.deployGateway ? "new_gateway_and_spoke" : "new_spoke")
   ) {
     throw new Error("preflight evidence does not match this deployment");
+  }
+  if (
+    settings.deployGateway &&
+    (
+      !ethers.isHexString(preflight.samuelCoordinateArtifactHash, 32) ||
+      !ethers.isHexString(preflight.warpPortalArtifactHash, 32)
+    )
+  ) {
+    throw new Error("preflight bridge evidence commitments are invalid");
   }
   const checkedAt = Date.parse(String(preflight.checkedAt || ""));
   if (!Number.isFinite(checkedAt) || checkedAt > now + 60_000 || now - checkedAt > maximumAgeSeconds * 1000) {

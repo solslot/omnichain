@@ -15,14 +15,23 @@
    Identity Safe owner, slots 1 and 2 as the two Coadmin Safe owners, no
    duplicates, child thresholds 1, and a root threshold of 2 over exactly the
    two child Safe addresses.
-2. Generate three dedicated Samuel identities on the validator hosts and launch
-   a fresh 2-of-3 Testnet11 portal plus a dedicated Base Sepolia portal.
+2. Generate three dedicated Samuel identities on the validator hosts. Launch
+   the fresh 2-of-3 Testnet11 portal, then run `npm run
+   build:warp-artifacts` against Warp commit
+   `425a69650ccdf0b28e9f4fccb91d736b05b20512`. Deploy the dedicated Base
+   Sepolia portal with `npm run deploy:warp-portal -- --network baseSepolia`.
+   Require the same three validator EVM addresses, threshold 2, atomic proxy
+   initialization, zero testnet toll, `xch` support, Safe ownership of both the
+   Portal and ProxyAdmin, and twelve confirmed blocks.
 3. Deploy the slot-0 Owner Identity Safe, 1-of-2 Coadmin Safe, 2-of-2 root Safe,
    guarded recovery module, and self-administered 86,400-second timelock. Verify
    live owners, thresholds, guard/module/fallback state, roles, bytecode,
    guardian separation, and immutable root-Safe payout binding.
-4. Produce the read-only schema-v3 preflight for the exact source SHA, Circle
-   Base Sepolia USDC, fresh Samuel coordinates, root Safe, and timelock.
+4. Export fresh schema-v3 Samuel coordinates using the confirmed Base portal
+   and the gateway address predicted from the deployer's then-current nonce.
+   Produce the read-only schema-v5 Omnichain preflight for the exact source
+   SHA, Circle Base Sepolia USDC, fresh Samuel coordinates, hash-sealed Warp
+   portal deployment, root Safe, and timelock.
 5. Deploy the dedicated Base Sepolia gateway and USDC-only spoke, configure the
    trusted spoke, then nominate the timelock as pending owner of both.
 6. Approve the generated ownership schedule through both child Safes, submit it
