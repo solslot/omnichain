@@ -26,3 +26,14 @@
 - Global payment IDs are domain-separated by origin selector, origin spoke, settlement-token address, and local payment ID.
 - Base/Ethereum failover changes cannot affect an existing request because routing is embedded in the request and deposit.
 - CCIP message arrays contain zero token transfers in both directions.
+
+## EVM authority
+
+- The Owner Identity Safe has exactly slot 0 as its sole owner and threshold 1.
+- The Coadmin Safe has exactly slots 1 and 2 as owners and threshold 1.
+- The root Safe has exactly the two child Safes as owners and threshold 2.
+- Only the root Safe has proposer, executor, and canceller roles on the 86,400-second self-administered timelock.
+- Operational contracts are owned by the timelock; the immutable payout address is the root Safe.
+- All three Safes always have distinct reviewed guards and the official compatibility fallback handler installed; only the Owner Identity Safe has the reviewed recovery module.
+- Owner recovery cannot execute without guardian initiation, both coadmin approvals, replacement acceptance, unchanged Safe state, and 604,800 elapsed seconds.
+- Schema-v1 flat-Safe governance evidence and pre-RC19 rail evidence never authorize an API payment rail.

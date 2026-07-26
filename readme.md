@@ -37,20 +37,25 @@ npm run deploy:governance -- --network baseSepolia
 npm run preflight:testnet -- --network baseSepolia
 npm run deploy -- --network baseSepolia
 npm run prepare:ownership -- --network baseSepolia
+npm run prepare:ownership-safe -- --network baseSepolia
+npm run submit:ownership-safe -- --network baseSepolia
 npm run attest:activation -- --network baseSepolia
 ```
 
 `preflight:testnet` is read-only and deliberately requires
 `SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true`. It checks the pinned source SHA,
-RPC chain/router, deployer balance floor, Safe/timelock and Warp-portal runtime
+RPC chain/router, deployer balance floor, three-Safe authority/timelock and Warp-portal runtime
 code, the immutable USDC runtime contract and six-decimal interface,
-all gateway constructor inputs, the 12-confirmation policy, and a fresh
+all gateway constructor inputs, the exact Samuel source SHA, the pending
+deployer nonce, the gateway address predicted from that nonce, the
+12-confirmation policy, and a fresh
 owner-only evidence output. It prevents the deployment command from reaching a
 gateway or spoke transaction until those same contract-readiness checks pass.
 
 ```bash
 SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true \
 SOLSLOT_OMNICHAIN_SOURCE_SHA=$(git rev-parse HEAD) \
+SOLSLOT_SAMUEL_SOURCE_SHA=<exact-reviewed-samuel-sha> \
 SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
 SOLSLOT_SAMUEL_COORDINATE_EVIDENCE_PATH=/secure/omnichain/samuel-coordinates.json \
 SOLSLOT_OMNICHAIN_MIN_DEPLOYER_WEI=10000000000000000 \
@@ -69,15 +74,31 @@ SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT=/secure/omnichain/base-sepolia-deployment.js
 npm run deploy -- --network baseSepolia
 ```
 
-`deploy:governance` deterministically deploys a 2-of-3 Safe from the verified
-three-administrator ceremony roster and a self-administered 24-hour timelock.
-The Safe is the immutable payout address and sole proposer, canceller, and
-executor. `GOVERNANCE_ADDRESS` is always the timelock, never the Safe.
+`deploy:governance` deterministically deploys three Safe 1.4.1 accounts from
+the verified ceremony roster. The Owner Identity Safe is 1-of-1 slot 0, the
+Coadmin Safe is 1-of-2 slots 1 and 2, and the root Safe is 2-of-2 over those
+two child Safes. Consequently every root action requires slot 0 plus either
+coadmin; slots 1 and 2 cannot act together without slot 0. The root Safe is the
+immutable payout address and sole proposer, canceller, and executor of the
+self-administered 24-hour timelock. `GOVERNANCE_ADDRESS` is always the
+timelock and `ROOT_SAFE_ADDRESS` is always the root Safe.
+
+The same deployment installs a distinct immutable guard on every Safe and a
+recovery module on the Owner Identity Safe. The guards block direct owner,
+threshold, module, fallback, and guard reconfiguration while permitting normal
+calls and the official Safe `SignMessageLib`. Recovery requires initiation by
+a separate secp256k1 guardian, approval by both coadmins, explicit acceptance by the replacement
+owner, and a seven-day delay. A separate 48-byte BLS recovery public key is
+committed in the immutable deployment evidence for the corresponding Chia
+recovery runbook; neither guardian may reuse an administrator key.
 
 The rail deployment creates a dedicated gateway and spoke, configures the
 trusted spoke while the deployer is still owner, and starts two-step ownership
 transfer to the timelock. It rejects old mainnet Warp coordinates and requires
-the fresh 2-of-3 Samuel coordinate artifact.
+the fresh 2-of-3 Samuel coordinate artifact. The artifact's curried Chia return
+puzzle must name the gateway address predicted from the deployment signer and
+pending nonce. Deployment aborts if that nonce changes or the deployed address
+does not match the evidence.
 
 Every deployment also requires `SOLSLOT_OMNICHAIN_SOURCE_SHA` to match a clean
 checkout, `SOLSLOT_OMNICHAIN_CONFIRMATIONS` of at least 12 outside Hardhat,
@@ -91,12 +112,35 @@ reviewed. After the governance timelock accepts both contract transfers, run:
 
 ```bash
 SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH=/secure/omnichain/deployment.json \
+SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
 SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_OUTPUT=/secure/omnichain/ownership-intent.json \
 npm run prepare:ownership -- --network baseSepolia
 ```
 
-Submit the generated `scheduleTransaction` through the 2-of-3 Safe, wait at
-least 86,400 seconds, then submit `executeTransaction` through that same Safe.
+Generate the exact root transaction and the two domain-separated child-Safe
+messages without broadcasting:
+
+```bash
+SOLSLOT_OMNICHAIN_DEPLOYMENT_EVIDENCE_PATH=/secure/omnichain/deployment.json \
+SOLSLOT_GOVERNANCE_EVIDENCE_PATH=/secure/omnichain/governance.json \
+SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_PATH=/secure/omnichain/ownership-intent.json \
+SOLSLOT_OWNERSHIP_AUTHORITY_PHASE=schedule \
+SOLSLOT_OWNERSHIP_SAFE_OPERATION_OUTPUT=/secure/omnichain/schedule-operation.json \
+npm run prepare:ownership-safe -- --network baseSepolia
+```
+
+Slot 0 signs the `owner_identity` typed message and either slot 1 or slot 2
+signs the `coadmin` typed message. Neither administrator signs the root
+transaction as an EOA: the relayer packages their signatures as the two child
+Safe EIP-1271 contract signatures. Store those signatures in a hashed,
+owner-only `solslot-safe-authority-approvals` record bound to the operation
+artifact, then submit it with `submit:ownership-safe`. The submit command
+re-derives the live root nonce and Safe transaction hash before relaying.
+
+Wait at least 86,400 seconds, regenerate the package with
+`SOLSLOT_OWNERSHIP_AUTHORITY_PHASE=execute`, collect two fresh child-Safe
+messages, and submit again. A schedule signature cannot authorize execution,
+and a nonce change invalidates the package.
 Only after the operation is complete may activation evidence be produced:
 
 ```bash
@@ -106,7 +150,7 @@ SOLSLOT_OWNERSHIP_ACTIVATION_INTENT_PATH=/secure/omnichain/ownership-intent.json
 SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_OUTPUT=/secure/omnichain/activation.json \
 SOLSLOT_OMNICHAIN_GATEWAY_PROFILE=bse \
 GOVERNANCE_ADDRESS=0x... \
-SAFE_ADDRESS=0x... \
+ROOT_SAFE_ADDRESS=0x... \
 npm run attest:activation -- --network baseSepolia
 ```
 
@@ -114,6 +158,13 @@ The activation attestation requires the recorded timelock operation to be done,
 then re-reads the live `owner()` and runtime bytecode of
 the gateway and spoke, binds both to the immutable deployment artifact, and
 refuses pending or mismatched ownership. It is also non-overwritable.
+
+RC20 authority evidence is intentionally breaking: governance uses schema v2,
+while preflight, rail deployment, ownership intent, Safe authority operation,
+and activation use schemas v5, v5, v2, v1, and v3 respectively. Schema-v1
+flat-Safe authority and pre-RC20 rail deployment files are rejected. See
+[`security/EVM_AUTHORITY.md`](security/EVM_AUTHORITY.md) for signing and
+recovery procedures.
 
 Run the read-only escrow event relayer as a separate service after activation:
 

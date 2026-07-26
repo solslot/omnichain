@@ -56,9 +56,9 @@ function deploymentSettings(environment, config, networkName, networks) {
   const payout = requiredAddress(environment, "PAYOUT_ADDRESS");
   const usdc = requiredAddress(environment, "USDC_ADDRESS", config.stablecoins?.usdc);
   const governance = requiredAddress(environment, "GOVERNANCE_ADDRESS");
-  const safe = requiredAddress(environment, "SAFE_ADDRESS");
-  if (payout !== safe) throw new Error("PAYOUT_ADDRESS must equal SAFE_ADDRESS for testnet alpha");
-  if (governance === safe) throw new Error("GOVERNANCE_ADDRESS must be the timelock, not the Safe");
+  const rootSafe = requiredAddress(environment, "ROOT_SAFE_ADDRESS");
+  if (payout !== rootSafe) throw new Error("PAYOUT_ADDRESS must equal ROOT_SAFE_ADDRESS for testnet alpha");
+  if (governance === rootSafe) throw new Error("GOVERNANCE_ADDRESS must be the timelock, not the root Safe");
   const callbackGas = requiredUint(environment, "CCIP_CALLBACK_GAS", "500000", 1n);
   const emergencyDelay = requiredUint(environment, "EMERGENCY_REFUND_DELAY_SECONDS", "604800", 604800n);
   const confirmations = networkName === "hardhat"
@@ -68,6 +68,16 @@ function deploymentSettings(environment, config, networkName, networks) {
     throw new Error("SOLSLOT_OMNICHAIN_CONFIRMATIONS must be a positive safe integer");
   }
   const deployGateway = environment.DEPLOY_GATEWAY === "true";
+  const protocolSourceSha = String(environment.SOLSLOT_PROTOCOL_SOURCE_SHA || "").toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(protocolSourceSha)) {
+    throw new Error("SOLSLOT_PROTOCOL_SOURCE_SHA must be an exact git SHA");
+  }
+  const samuelSourceSha = deployGateway
+    ? String(environment.SOLSLOT_SAMUEL_SOURCE_SHA || "").toLowerCase()
+    : null;
+  if (deployGateway && !/^[0-9a-f]{40}$/.test(samuelSourceSha)) {
+    throw new Error("SOLSLOT_SAMUEL_SOURCE_SHA must be an exact git SHA");
+  }
   const hubName = defaultHubName(config, networkName);
   const hub = networks[hubName];
   if (!hub) throw new Error(`Missing hub configuration for ${hubName}`);
@@ -86,6 +96,18 @@ function deploymentSettings(environment, config, networkName, networks) {
       warpChiaChain: requiredBytes(environment, "WARP_CHIA_CHAIN", 3),
       samuelBridgingPuzzle: requiredBytes(environment, "SAMUEL_BRIDGING_PUZZLE", 32),
       samuelReturnPuzzle: requiredBytes(environment, "SAMUEL_RETURN_PUZZLE", 32),
+      voucherResultAuthorizationMod: requiredBytes(
+        environment,
+        "VOUCHER_RESULT_AUTHORIZATION_MOD_HASH",
+        32,
+      ),
+      voucherBurnInner: requiredBytes(
+        environment,
+        "VOUCHER_BURN_INNER_HASH",
+        32,
+      ),
+      protocolSourceSha,
+      samuelSourceSha,
       maxWarpTollWei: requiredUint(environment, "MAX_WARP_TOLL_WEI", undefined, 1n),
       maxCcipFeeWei: requiredUint(environment, "MAX_CCIP_FEE_WEI", undefined, 1n),
     }
@@ -94,7 +116,7 @@ function deploymentSettings(environment, config, networkName, networks) {
     payout,
     usdc,
     governance,
-    safe,
+    rootSafe,
     callbackGas,
     emergencyDelay,
     confirmations,
@@ -129,11 +151,11 @@ async function inspectDeploymentReadiness({
   if (Number(network.chainId) !== config.chainId) {
     throw new Error("deployment RPC chain does not match configured network");
   }
-  const [router, usdc, governance, safe] = await Promise.all([
+  const [router, usdc, governance, rootSafe] = await Promise.all([
     runtimeCode(provider, config.router, "CCIP router"),
     runtimeCode(provider, settings.usdc, "USDC"),
     runtimeCode(provider, settings.governance, "governance"),
-    runtimeCode(provider, settings.safe, "Safe"),
+    runtimeCode(provider, settings.rootSafe, "root Safe"),
   ]);
   const usdcDecimals = await tokenDecimals(provider, settings.usdc);
   if (usdcDecimals !== 6) {
@@ -143,18 +165,29 @@ async function inspectDeploymentReadiness({
     ? [await runtimeCode(provider, settings.gatewaySettings.warpPortal, "Warp portal")]
     : [await runtimeCode(provider, settings.gateway, "hub gateway")];
   const deployerAddress = ethers.getAddress(deployer);
-  const deployerBalanceWei = await provider.getBalance(deployerAddress);
+  const [deployerBalanceWei, deployerNonce] = await Promise.all([
+    provider.getBalance(deployerAddress),
+    provider.getTransactionCount(deployerAddress, "pending"),
+  ]);
   if (deployerBalanceWei < minimumDeployerBalanceWei) {
     throw new Error("deployer balance is below the configured deployment minimum");
   }
+  if (!Number.isSafeInteger(deployerNonce) || deployerNonce < 0) {
+    throw new Error("deployer pending nonce is invalid");
+  }
+  const predictedGatewayAddress = settings.deployGateway
+    ? ethers.getCreateAddress({ from: deployerAddress, nonce: deployerNonce })
+    : null;
   return {
     chainId: Number(network.chainId),
     deployer: deployerAddress,
     deployerBalanceWei: deployerBalanceWei.toString(),
     minimumDeployerBalanceWei: minimumDeployerBalanceWei.toString(),
+    deployerNonce,
+    predictedGatewayAddress,
     tokenDecimals: { usdc: usdcDecimals },
     runtimeCodeHashes: Object.fromEntries(
-      [router, usdc, governance, safe, ...additional].map((item) => [item.address, item.codeHash]),
+      [router, usdc, governance, rootSafe, ...additional].map((item) => [item.address, item.codeHash]),
     ),
   };
 }
@@ -193,7 +226,7 @@ function validatePreflightEvidence({
   }
   const preflight = readEvidence(evidencePath, "preflight");
   if (
-    preflight.schemaVersion !== 2 ||
+    preflight.schemaVersion !== 5 ||
     preflight.kind !== "solslot-omnichain-testnet-deployment-preflight" ||
     preflight.sourceSha !== sourceSha ||
     preflight.network !== networkName ||
@@ -204,6 +237,15 @@ function validatePreflightEvidence({
     preflight.deploymentMode !== (settings.deployGateway ? "new_gateway_and_spoke" : "new_spoke")
   ) {
     throw new Error("preflight evidence does not match this deployment");
+  }
+  if (
+    settings.deployGateway &&
+    (
+      !ethers.isHexString(preflight.samuelCoordinateArtifactHash, 32) ||
+      !ethers.isHexString(preflight.warpPortalArtifactHash, 32)
+    )
+  ) {
+    throw new Error("preflight bridge evidence commitments are invalid");
   }
   const checkedAt = Date.parse(String(preflight.checkedAt || ""));
   if (!Number.isFinite(checkedAt) || checkedAt > now + 60_000 || now - checkedAt > maximumAgeSeconds * 1000) {
@@ -217,7 +259,7 @@ function validatePreflightEvidence({
     ccipRouter: config.router,
     payout: settings.payout,
     governance: settings.governance,
-    safe: settings.safe,
+    rootSafe: settings.rootSafe,
     usdc: settings.usdc,
     ...(settings.deployGateway
       ? { warpPortal: settings.gatewaySettings.warpPortal }
@@ -234,6 +276,33 @@ function validatePreflightEvidence({
     declared.confirmations !== settings.confirmations
   ) {
     throw new Error("preflight evidence numeric settings do not match this deployment");
+  }
+  if (
+    settings.deployGateway &&
+    (
+      declared.protocolSourceSha !== settings.gatewaySettings.protocolSourceSha ||
+      declared.samuelSourceSha !== settings.gatewaySettings.samuelSourceSha ||
+      String(declared.voucherResultAuthorizationMod || "").toLowerCase() !==
+        settings.gatewaySettings.voucherResultAuthorizationMod.toLowerCase() ||
+      String(declared.voucherBurnInner || "").toLowerCase() !==
+        settings.gatewaySettings.voucherBurnInner.toLowerCase()
+    )
+  ) {
+    throw new Error(
+      "preflight evidence protocol voucher puzzles do not match this deployment",
+    );
+  }
+  if (
+    !ethers.isAddress(declared.predictedGatewayAddress) ||
+    ethers.getAddress(declared.predictedGatewayAddress) !==
+      inspection.predictedGatewayAddress ||
+    preflight.inspection?.deployerNonce !== inspection.deployerNonce ||
+    preflight.inspection?.predictedGatewayAddress !==
+      inspection.predictedGatewayAddress
+  ) {
+    throw new Error(
+      "preflight evidence deployer nonce or predicted gateway has changed",
+    );
   }
   if (preflight.inspection?.tokenDecimals?.usdc !== 6) {
     throw new Error("preflight evidence USDC decimals are invalid");

@@ -21,6 +21,9 @@ function hex(byte, length) {
 
 function deposit(overrides = {}) {
   return {
+    depositor: hex("09", 20),
+    settlementToken: hex("0a", 20),
+    localPaymentId: hex("0b", 32),
     purchaseId: hex("11", 32),
     artifactHash: hex("12", 32),
     amount: 125_000_000n,
@@ -51,10 +54,13 @@ function config(statePath) {
 }
 
 describe("confirmed escrow event relayer", function () {
-  it("encodes the exact ten-word chain message", function () {
+  it("encodes the exact protocol message and refund identity", function () {
     expect(escrowMessageFromDeposit(hex("10", 32), deposit(), "base_testnet")).to.deep.equal({
       gatewayProfile: "base_testnet",
       globalPaymentId: hex("10", 32),
+      localPaymentId: hex("0b", 32),
+      depositor: ethers.getAddress(hex("09", 20)),
+      settlementToken: ethers.getAddress(hex("0a", 20)),
       purchaseId: hex("11", 32),
       artifactHash: hex("12", 32),
       amount: 125_000_000,
@@ -176,13 +182,17 @@ describe("confirmed escrow event relayer", function () {
         expect(filter.toBlock).to.equal(100);
         return [log];
       },
-      getBlock: async () => ({ hash: blockHash }),
+      getBlock: async () => ({ hash: blockHash, timestamp: 1_754_000_000 }),
     };
     const spoke = {
       interface: iface,
       getDeposit: async (paymentId) => {
         expect(paymentId).to.equal(globalPaymentId);
-        return deposit();
+        return deposit({
+          localPaymentId: hex("33", 32),
+          depositor: hex("34", 20),
+          settlementToken: hex("35", 20),
+        });
       },
     };
     let callbackPayload;
@@ -212,6 +222,7 @@ describe("confirmed escrow event relayer", function () {
       transactionHash,
       blockNumber: 100,
       blockHash,
+      blockTimestamp: 1_754_000_000,
       logIndex: 2,
       confirmations: 12,
     });

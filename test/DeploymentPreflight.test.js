@@ -34,7 +34,7 @@ function networks() {
 function environment(overrides = {}) {
   return {
     PAYOUT_ADDRESS: address("12"),
-    SAFE_ADDRESS: address("12"),
+    ROOT_SAFE_ADDRESS: address("12"),
     USDC_ADDRESS: address("13"),
     GOVERNANCE_ADDRESS: address("15"),
     CCIP_CALLBACK_GAS: "500000",
@@ -45,6 +45,10 @@ function environment(overrides = {}) {
     WARP_CHIA_CHAIN: "0x010203",
     SAMUEL_BRIDGING_PUZZLE: `0x${"17".repeat(32)}`,
     SAMUEL_RETURN_PUZZLE: `0x${"18".repeat(32)}`,
+    VOUCHER_RESULT_AUTHORIZATION_MOD_HASH: `0x${"19".repeat(32)}`,
+    VOUCHER_BURN_INNER_HASH: `0x${"1a".repeat(32)}`,
+    SOLSLOT_PROTOCOL_SOURCE_SHA: "a".repeat(40),
+    SOLSLOT_SAMUEL_SOURCE_SHA: "b".repeat(40),
     MAX_WARP_TOLL_WEI: "1",
     MAX_CCIP_FEE_WEI: "1",
     ...overrides,
@@ -58,13 +62,14 @@ function provider(overrides = {}) {
     getCode: async () => "0x6001600055",
     call: async () => decimals.encodeFunctionResult("decimals", [6]),
     getBalance: async () => 1_000_000_000_000_000_000n,
+    getTransactionCount: async () => 7,
     ...overrides,
   };
 }
 
 function preflightRecord(settings, inspection, overrides = {}) {
   return withArtifactHash({
-    schemaVersion: 2,
+    schemaVersion: 5,
     kind: "solslot-omnichain-testnet-deployment-preflight",
     sourceSha: "a".repeat(40),
     network: "baseSepolia",
@@ -73,16 +78,24 @@ function preflightRecord(settings, inspection, overrides = {}) {
     hubName: "baseSepolia",
     hubChainSelector: "10344971235874465080",
     deploymentMode: "new_gateway_and_spoke",
+    samuelCoordinateArtifactHash: `0x${"21".repeat(32)}`,
+    warpPortalArtifactHash: `0x${"22".repeat(32)}`,
     settings: {
       ccipRouter: configuration().router,
       payout: settings.payout,
       governance: settings.governance,
-      safe: settings.safe,
+      rootSafe: settings.rootSafe,
       usdc: settings.usdc,
       warpPortal: settings.gatewaySettings.warpPortal,
+      predictedGatewayAddress: inspection.predictedGatewayAddress,
       callbackGas: settings.callbackGas.toString(),
       emergencyDelay: settings.emergencyDelay.toString(),
       confirmations: settings.confirmations,
+      protocolSourceSha: settings.gatewaySettings.protocolSourceSha,
+      samuelSourceSha: settings.gatewaySettings.samuelSourceSha,
+      voucherResultAuthorizationMod:
+        settings.gatewaySettings.voucherResultAuthorizationMod,
+      voucherBurnInner: settings.gatewaySettings.voucherBurnInner,
     },
     inspection,
     checkedAt: new Date().toISOString(),
@@ -113,6 +126,10 @@ describe("testnet deployment preflight", function () {
       minimumDeployerBalanceWei: "1",
     });
     expect(inspected.tokenDecimals).to.deep.equal({ usdc: 6 });
+    expect(inspected.deployerNonce).to.equal(7);
+    expect(inspected.predictedGatewayAddress).to.equal(
+      ethers.getCreateAddress({ from: address("19"), nonce: 7 }),
+    );
     expect(settings.hubChainSelector).to.equal(10344971235874465080n);
   });
 
@@ -127,11 +144,11 @@ describe("testnet deployment preflight", function () {
 
   it("requires the payout Safe and timelock to be distinct", function () {
     expect(() => deploymentSettings(
-      environment({ SAFE_ADDRESS: address("14") }),
+      environment({ ROOT_SAFE_ADDRESS: address("14") }),
       configuration(),
       "baseSepolia",
       networks(),
-    )).to.throw("PAYOUT_ADDRESS must equal SAFE_ADDRESS");
+    )).to.throw("PAYOUT_ADDRESS must equal ROOT_SAFE_ADDRESS");
     expect(() => deploymentSettings(
       environment({ GOVERNANCE_ADDRESS: address("12") }),
       configuration(),
@@ -200,6 +217,17 @@ describe("testnet deployment preflight", function () {
     }));
     expect(() => validatePreflightEvidence({ ...input, evidencePath: stale }))
       .to.throw("stale");
+
+    const changedNonce = {
+      ...inspection,
+      deployerNonce: inspection.deployerNonce + 1,
+      predictedGatewayAddress: ethers.getCreateAddress({
+        from: inspection.deployer,
+        nonce: inspection.deployerNonce + 1,
+      }),
+    };
+    expect(() => validatePreflightEvidence({ ...input, inspection: changedNonce }))
+      .to.throw("predicted gateway has changed");
 
     const changedInspection = {
       ...inspection,

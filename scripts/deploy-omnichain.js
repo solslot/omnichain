@@ -18,6 +18,7 @@ const {
 } = require("./lib/deployment-preflight");
 const { validateGovernanceEvidence } = require("./lib/governance-deployment");
 const { validateSamuelCoordinates } = require("./lib/samuel-coordinates");
+const { validateWarpPortalEvidence } = require("./lib/warp-portal-deployment");
 
 async function verify(address, constructorArguments) {
   if (process.env.VERIFY_CONTRACTS !== "true") return;
@@ -63,14 +64,26 @@ async function main() {
   const governanceEvidence = await validateGovernanceEvidence({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
-    safe: settings.safe,
+    rootSafe: settings.rootSafe,
     timelock: settings.governance,
   });
   if (!settings.gatewaySettings) throw new Error("alpha deployment must create a dedicated gateway");
   const samuelEvidence = validateSamuelCoordinates(
     process.env.SOLSLOT_SAMUEL_COORDINATE_EVIDENCE_PATH,
-    settings.gatewaySettings,
+    {
+      ...settings.gatewaySettings,
+      predictedGatewayAddress: inspection.predictedGatewayAddress,
+    },
   );
+  const warpPortalEvidence = await validateWarpPortalEvidence({
+    path: process.env.SOLSLOT_WARP_PORTAL_EVIDENCE_PATH,
+    provider: ethers.provider,
+    expectedPortal: settings.gatewaySettings.warpPortal,
+    expectedOmnichainSourceSha: sourceSha,
+    expectedRosterArtifactHash: samuelEvidence.validatorRosterArtifactHash,
+    expectedValidatorAddresses: samuelEvidence.validatorEvmAddresses,
+    minimumConfirmations: settings.confirmations,
+  });
   const preflight = validatePreflightEvidence({
     evidencePath: process.env.SOLSLOT_OMNICHAIN_PREFLIGHT_EVIDENCE_PATH,
     sourceSha,
@@ -91,11 +104,14 @@ async function main() {
   if (preflight.samuelCoordinateArtifactHash !== samuelEvidence.artifactHash) {
     throw new Error("preflight Samuel evidence does not match this deployment");
   }
+  if (preflight.warpPortalArtifactHash !== warpPortalEvidence.artifactHash) {
+    throw new Error("preflight Warp portal evidence does not match this deployment");
+  }
   const {
     payout,
     usdc,
     governance,
-    safe,
+    rootSafe,
     callbackGas,
     emergencyDelay,
     confirmations,
@@ -124,6 +140,16 @@ async function main() {
     gatewayContract = await ethers.deployContract("SolomonWarpGateway", gatewayArgs);
     await gatewayContract.waitForDeployment();
     gatewayAddress = await gatewayContract.getAddress();
+    if (
+      ethers.getAddress(gatewayAddress) !==
+      ethers.getAddress(inspection.predictedGatewayAddress) ||
+      ethers.getAddress(gatewayAddress) !==
+      ethers.getAddress(samuelEvidence.baseSepolia.solomonGatewayAddress)
+    ) {
+      throw new Error(
+        "deployed gateway address does not match Samuel coordinate evidence",
+      );
+    }
     gatewayDeployment = await confirmedReceipt(gatewayContract, confirmations, "gateway");
     await verify(gatewayAddress, gatewayArgs);
     gatewayOwnershipTransfer = await confirmedCall(
@@ -175,7 +201,7 @@ async function main() {
   }
 
   const evidence = withArtifactHash({
-    schemaVersion: 2,
+    schemaVersion: 5,
     protocolVersion: "solslot-v2",
     rail: "ccip-warp-escrow",
     sourceSha,
@@ -186,6 +212,7 @@ async function main() {
     preflightArtifactHash: preflight.artifactHash,
     governanceArtifactHash: governanceEvidence.artifactHash,
     samuelCoordinateArtifactHash: samuelEvidence.artifactHash,
+    warpPortalArtifactHash: warpPortalEvidence.artifactHash,
     contracts: {
       ccipRouter: config.router,
       gateway: gatewayAddress,
@@ -197,8 +224,10 @@ async function main() {
       callbackGas: callbackGas.toString(),
       emergencyDelay: emergencyDelay.toString(),
       payoutAddress: payout,
-      governanceSafe: safe,
+      governanceRootSafe: rootSafe,
       governanceTimelock: governance,
+      samuelSourceSha: settings.gatewaySettings.samuelSourceSha,
+      predictedGatewayAddress: inspection.predictedGatewayAddress,
       ownershipAccepted: false,
     },
     deploymentTransactions: {
@@ -213,7 +242,7 @@ async function main() {
       gateway: await runtimeCodeHash(gatewayAddress, "gateway"),
       spoke: await runtimeCodeHash(spokeAddress, "spoke"),
       usdc: await runtimeCodeHash(usdc, "USDC"),
-      governanceSafe: await runtimeCodeHash(safe, "Safe"),
+      governanceRootSafe: await runtimeCodeHash(rootSafe, "root Safe"),
       governanceTimelock: await runtimeCodeHash(governance, "governance timelock"),
     },
     createdAt: new Date().toISOString(),

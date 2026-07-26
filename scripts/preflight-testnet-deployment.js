@@ -14,6 +14,7 @@ const {
 } = require("./lib/deployment-preflight");
 const { validateGovernanceEvidence } = require("./lib/governance-deployment");
 const { validateSamuelCoordinates } = require("./lib/samuel-coordinates");
+const { validateWarpPortalEvidence } = require("./lib/warp-portal-deployment");
 
 async function main() {
   if (!isTestnet(network.name) || process.env.SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT !== "true") {
@@ -41,16 +42,28 @@ async function main() {
   const governance = await validateGovernanceEvidence({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
-    safe: settings.safe,
+    rootSafe: settings.rootSafe,
     timelock: settings.governance,
   });
   if (!settings.gatewaySettings) throw new Error("alpha preflight must deploy a dedicated gateway");
   const samuel = validateSamuelCoordinates(
     process.env.SOLSLOT_SAMUEL_COORDINATE_EVIDENCE_PATH,
-    settings.gatewaySettings,
+    {
+      ...settings.gatewaySettings,
+      predictedGatewayAddress: inspection.predictedGatewayAddress,
+    },
   );
+  const warpPortal = await validateWarpPortalEvidence({
+    path: process.env.SOLSLOT_WARP_PORTAL_EVIDENCE_PATH,
+    provider: ethers.provider,
+    expectedPortal: settings.gatewaySettings.warpPortal,
+    expectedOmnichainSourceSha: sourceSha,
+    expectedRosterArtifactHash: samuel.validatorRosterArtifactHash,
+    expectedValidatorAddresses: samuel.validatorEvmAddresses,
+    minimumConfirmations: settings.confirmations,
+  });
   const evidence = withArtifactHash({
-    schemaVersion: 2,
+    schemaVersion: 5,
     kind: "solslot-omnichain-testnet-deployment-preflight",
     sourceSha,
     network: network.name,
@@ -61,17 +74,26 @@ async function main() {
     deploymentMode: settings.deployGateway ? "new_gateway_and_spoke" : "new_spoke",
     governanceArtifactHash: governance.artifactHash,
     samuelCoordinateArtifactHash: samuel.artifactHash,
+    warpPortalArtifactHash: warpPortal.artifactHash,
     settings: {
       payout: settings.payout,
       ccipRouter: config.router,
       governance: settings.governance,
-      safe: settings.safe,
+      rootSafe: settings.rootSafe,
       usdc: settings.usdc,
       callbackGas: settings.callbackGas.toString(),
       emergencyDelay: settings.emergencyDelay.toString(),
       confirmations: settings.confirmations,
       ...(settings.gatewaySettings
-        ? { warpPortal: settings.gatewaySettings.warpPortal }
+        ? {
+          warpPortal: settings.gatewaySettings.warpPortal,
+          predictedGatewayAddress: inspection.predictedGatewayAddress,
+          protocolSourceSha: settings.gatewaySettings.protocolSourceSha,
+          samuelSourceSha: settings.gatewaySettings.samuelSourceSha,
+          voucherResultAuthorizationMod:
+            settings.gatewaySettings.voucherResultAuthorizationMod,
+          voucherBurnInner: settings.gatewaySettings.voucherBurnInner,
+        }
         : { hubGateway: settings.gateway }),
     },
     inspection,
