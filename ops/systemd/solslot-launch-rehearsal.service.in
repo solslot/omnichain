@@ -1,0 +1,28 @@
+[Unit]
+Description=Solslot RC22 launch payment rehearsal coordinator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=solslot
+Group=solslot
+WorkingDirectory=@@RELEASE_DIR@@
+EnvironmentFile=@@ENVIRONMENT_FILE@@
+ExecStart=/usr/bin/node scripts/serve-launch-rehearsal.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=@@RELEASE_DIR@@
+ReadWritePaths=@@STATE_DIR@@
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
