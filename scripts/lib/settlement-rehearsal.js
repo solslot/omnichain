@@ -51,17 +51,11 @@ function tokenAddressFromAssetId(assetId) {
   return token;
 }
 
-function readPurchaseArtifact(inputPath) {
-  if (!inputPath) throw new Error("SOLSLOT_REHEARSAL_PURCHASE_ARTIFACT_PATH is required");
-  const resolved = path.resolve(inputPath);
-  const stat = fs.lstatSync(resolved);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > MAX_PURCHASE_ARTIFACT_BYTES) {
-    throw new Error("purchase artifact path is invalid");
-  }
-  const envelope = JSON.parse(fs.readFileSync(resolved, "utf8"));
-  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+function normalizePurchaseArtifact(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("purchase artifact must be an object");
   }
+  const envelope = value;
   const artifact = envelope.purchaseArtifactV2 || envelope;
   if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
     throw new Error("purchaseArtifactV2 must be an object");
@@ -89,6 +83,16 @@ function readPurchaseArtifact(inputPath) {
   }
   tokenAddressFromAssetId(normalized.railAssetId);
   return normalized;
+}
+
+function readPurchaseArtifact(inputPath) {
+  if (!inputPath) throw new Error("SOLSLOT_REHEARSAL_PURCHASE_ARTIFACT_PATH is required");
+  const resolved = path.resolve(inputPath);
+  const stat = fs.lstatSync(resolved);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > MAX_PURCHASE_ARTIFACT_BYTES) {
+    throw new Error("purchase artifact path is invalid");
+  }
+  return normalizePurchaseArtifact(JSON.parse(fs.readFileSync(resolved, "utf8")));
 }
 
 function loadRehearsalConfig(environment = process.env) {
@@ -266,6 +270,7 @@ async function verifySettlementRehearsal(
 
 module.exports = {
   loadRehearsalConfig,
+  normalizePurchaseArtifact,
   readPurchaseArtifact,
   tokenAddressFromAssetId,
   validateDeposit,
