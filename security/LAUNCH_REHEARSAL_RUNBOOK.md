@@ -5,8 +5,10 @@
 The launch wizard uses this loopback service after genesis to prove both Base
 Sepolia outcomes before customer presale or purchase windows can open:
 
-1. Faucet USDC produces the exact governed SmartDeed delivery.
-2. A second faucet-USDC payment returns the exact principal to its depositor.
+1. Test USDC produces the exact governed SmartDeed delivery.
+2. A second test-USDC payment for that same deed returns the exact principal
+   to its depositor because the first payment already consumed the only canary
+   inventory.
 
 The coordinator does not price a property, choose a vault, mint a deed, or
 decide an outcome. It accepts only coordinator-issued `PurchaseArtifactV2`
@@ -17,12 +19,13 @@ records and verifies the resulting EVM and Chia evidence.
 Complete these steps in the admin UI:
 
 1. Finish genesis and lock the signed public artifact.
-2. Publish a small governed canary collection with two test deeds.
+2. Publish a small governed canary collection with one test deed.
 3. Use an approved test vault. It must have a current zkPassport stamp.
-4. Create one delivery artifact and one refund artifact from the collection
-   desk. Each quote must remain valid for at least ten minutes.
+4. Create two distinct payment artifacts for that same deed, approved vault,
+   and exact amount from the collection desk. Each quote must remain valid for
+   at least twenty minutes.
 5. Generate and activate the rehearsal configuration.
-6. An enrolled coadministrator opens **Customer Payments** and follows the one
+6. An enrolled coadministrator opens **Payment Check** and follows the one
    action shown at a time.
 
 The browser shows ordinary labels and amounts. Exact contract, deed, and vault
@@ -32,7 +35,7 @@ coordinates remain available under **Verify exact destination**.
 
 - Use only the enrolled administrator wallet assigned by the desk.
 - Check that the wallet says **Base Sepolia** before every approval.
-- The approval must equal the displayed faucet-USDC amount. Never approve an
+- The approval must equal the displayed test-USDC amount. Never approve an
   unlimited amount.
 - Never type or share a recovery phrase, private key, Google recovery password,
   or Safe owner key in Solslot, email, chat, or a support ticket.
@@ -62,13 +65,14 @@ SOLSLOT_LAUNCH_REHEARSAL_HOST=127.0.0.1
 SOLSLOT_LAUNCH_REHEARSAL_PORT=8793
 ```
 
-Terminate TLS in the existing authenticated reverse proxy. The API-facing URL
-must be HTTPS. Do not expose port `8793` publicly.
+Keep the API and coordinator on the same host and use
+`http://127.0.0.1:8793`. A remote API-facing URL must use HTTPS. Do not expose
+port `8793` publicly.
 
 The coordinator API must receive the same public config hash and HMAC secret:
 
 ```text
-SOLSLOT_LAUNCH_REHEARSAL_SERVICE_URL=https://INTERNAL_HOST/launch-rehearsal
+SOLSLOT_LAUNCH_REHEARSAL_SERVICE_URL=http://127.0.0.1:8793
 SOLSLOT_LAUNCH_REHEARSAL_SERVICE_TOKEN=...
 SOLSLOT_LAUNCH_REHEARSAL_CONFIG_HASH=0x...
 SOLSLOT_LAUNCH_REHEARSAL_EVIDENCE_HMAC_SECRET=...

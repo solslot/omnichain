@@ -1,0 +1,223 @@
+name: Deploy Launch Rehearsal Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact 40-character omnichain commit SHA
+        required: true
+        type: string
+      activate_service:
+        description: Start the coordinator after verifying post-genesis configuration
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: solslot-launch-rehearsal-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_ROOT: ${{ vars.SOLSLOT_REHEARSAL_RELEASE_ROOT || '/opt/solslot/launch-rehearsal-staging' }}
+  SHARED_ROOT: ${{ vars.SOLSLOT_REHEARSAL_SHARED_ROOT || '/opt/solslot/launch-rehearsal-staging/shared' }}
+  ENV_FILE: ${{ vars.SOLSLOT_REHEARSAL_ENV_FILE || '/opt/solslot/launch-rehearsal-staging/shared/.env' }}
+  SERVICE_NAME: ${{ vars.SOLSLOT_REHEARSAL_SERVICE || 'solslot-launch-rehearsal-staging.service' }}
+  SERVICE_USER: ${{ vars.SOLSLOT_API_SYSTEMD_USER || 'solslot-api' }}
+  EXPECTED_HOSTNAME: ${{ vars.SOLSLOT_API_HOSTNAME || 'SolomonsLot' }}
+  SERVICE_PORT: ${{ vars.SOLSLOT_REHEARSAL_PORT || '8793' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Validate exact source
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Verify release
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          npm ci
+          npm run build
+          npm test
+          node --check scripts/serve-launch-rehearsal.js
+          node --check scripts/lib/launch-rehearsal-coordinator.js
+
+      - name: Package deterministic service release
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git show -s --format=%ct "$RELEASE_SHA")"
+          printf '{"commit":"%s","sourceDateEpoch":%s}\n' \
+            "$RELEASE_SHA" "$source_date_epoch" > release.json
+          tar \
+            --sort=name \
+            --mtime="@$source_date_epoch" \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            --format=gnu \
+            -czf "solslot-launch-rehearsal-$RELEASE_SHA.tgz" \
+            package.json \
+            package-lock.json \
+            release.json \
+            scripts/serve-launch-rehearsal.js \
+            scripts/lib \
+            ops/systemd/solslot-launch-rehearsal.service.in \
+            security/LAUNCH_REHEARSAL_RUNBOOK.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solslot-launch-rehearsal-${{ inputs.release_sha }}
+          path: solslot-launch-rehearsal-${{ inputs.release_sha }}.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Copy release to staging
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.STAGING_SERVER_IP }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          port: 22
+          source: solslot-launch-rehearsal-${{ inputs.release_sha }}.tgz
+          target: /tmp
+          rm: false
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Install exact release
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          ACTIVATE_SERVICE: ${{ inputs.activate_service }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        with:
+          host: ${{ secrets.STAGING_SERVER_IP }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          port: 22
+          command_timeout: 15m
+          envs: ACTIVATE_SERVICE,RELEASE_SHA
+          script: |
+            set -euo pipefail
+            test "$(hostname)" = "${{ env.EXPECTED_HOSTNAME }}"
+            release_root="${{ env.RELEASE_ROOT }}"
+            shared_root="${{ env.SHARED_ROOT }}"
+            release_dir="$release_root/releases/$RELEASE_SHA"
+            archive="/tmp/solslot-launch-rehearsal-$RELEASE_SHA.tgz"
+            service="${{ env.SERVICE_NAME }}"
+            service_user="${{ env.SERVICE_USER }}"
+            state_dir="$shared_root/state"
+            env_file="${{ env.ENV_FILE }}"
+            service_port="${{ env.SERVICE_PORT }}"
+
+            id "$service_user" >/dev/null 2>&1
+            sudo mkdir -p "$release_root/releases" "$state_dir"
+            sudo chown -R "$(id -un)":"$(id -gn)" "$release_root/releases"
+            sudo chown -R "$service_user":"$service_user" "$shared_root"
+            sudo chmod 0700 "$shared_root" "$state_dir"
+            test -f "$archive"
+
+            if [ ! -f "$release_dir/.release-ready" ]; then
+              mkdir -p "$release_dir"
+              tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$release_dir"
+              cd "$release_dir"
+              test "$(node -p 'require("./release.json").commit')" = "$RELEASE_SHA"
+              npm ci --omit=dev --ignore-scripts
+              node --check scripts/serve-launch-rehearsal.js
+              touch .release-ready
+            fi
+
+            next_link="$release_root/.current-$RELEASE_SHA"
+            sudo ln -sfn "$release_dir" "$next_link"
+            sudo mv -Tf "$next_link" "$release_root/current"
+            sudo tee "/etc/systemd/system/$service" >/dev/null <<EOF
+            [Unit]
+            Description=Solslot guided customer payment check
+            After=network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=simple
+            User=$service_user
+            Group=$service_user
+            WorkingDirectory=$release_root/current
+            EnvironmentFile=$env_file
+            Environment=SOLSLOT_LAUNCH_REHEARSAL_HOST=127.0.0.1
+            Environment=SOLSLOT_LAUNCH_REHEARSAL_PORT=$service_port
+            Environment=SOLSLOT_LAUNCH_REHEARSAL_STATE_DIR=$state_dir
+            ExecStart=/usr/bin/node scripts/serve-launch-rehearsal.js
+            Restart=on-failure
+            RestartSec=5
+            NoNewPrivileges=true
+            PrivateTmp=true
+            ProtectSystem=strict
+            ProtectHome=true
+            ReadOnlyPaths=$release_root/current
+            ReadWritePaths=$state_dir
+            RestrictAddressFamilies=AF_INET AF_INET6
+            RestrictNamespaces=true
+            LockPersonality=true
+            MemoryDenyWriteExecute=true
+            UMask=0077
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+            sudo systemctl daemon-reload
+
+            if [ "$ACTIVATE_SERVICE" = "true" ]; then
+              sudo test -f "$env_file"
+              sudo test "$(stat -c '%a' "$env_file")" = "600"
+              sudo grep -q '^SOLSLOT_LAUNCH_REHEARSAL_CONFIG_PATH=' "$env_file"
+              sudo grep -q '^SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_PATH=' "$env_file"
+              sudo grep -q '^SOLSLOT_LAUNCH_REHEARSAL_TOKEN_FILE=' "$env_file"
+              sudo grep -q '^SOLSLOT_LAUNCH_REHEARSAL_HMAC_FILE=' "$env_file"
+              sudo grep -q '^SOLSLOT_LAUNCH_REHEARSAL_API_TOKEN_FILE=' "$env_file"
+              sudo systemctl enable "$service"
+              sudo systemctl restart "$service"
+              for attempt in $(seq 1 30); do
+                curl -fsS "http://127.0.0.1:$service_port/health" >/dev/null && break
+                sleep 1
+              done
+              curl -fsS "http://127.0.0.1:$service_port/health" \
+                | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["healthy"] is True'
+            else
+              sudo systemctl disable --now "$service" 2>/dev/null || true
+              echo "Exact release installed. Service remains disabled until the post-genesis canary configuration exists."
+            fi
+
+            find "$release_root/releases" -mindepth 1 -maxdepth 1 -type d \
+              -printf '%T@ %p\n' | sort -nr | tail -n +6 | cut -d' ' -f2- \
+              | while read -r old_release; do
+                  test "$old_release" = "$(readlink -f "$release_root/current")" \
+                    || sudo rm -rf "$old_release"
+                done

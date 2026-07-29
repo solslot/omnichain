@@ -41,6 +41,9 @@
     "url": "https://github.com/solomonslot/omnichain/issues"
   },
   "homepage": "https://github.com/solomonslot/omnichain#readme",
+  "dependencies": {
+    "ethers": "6.14.0"
+  },
   "devDependencies": {
     "@chainlink/contracts-ccip": "1.6.4",
     "@nomicfoundation/hardhat-toolbox": "5.0.0",
@@ -49,7 +52,6 @@
     "@openzeppelin/contracts-5.0.2": "npm:@openzeppelin/contracts@5.0.2",
     "@safe-global/protocol-kit": "8.0.4",
     "dotenv": "16.5.0",
-    "ethers": "6.14.0",
     "hardhat": "2.28.0",
     "hardhat-preprocessor": "0.1.5"
   }

@@ -8,6 +8,7 @@ const {
   BASE_SEPOLIA_USDC,
   LaunchRehearsalCoordinator,
   SPOKE_ABI,
+  validateLanePair,
 } = require("../scripts/lib/launch-rehearsal-coordinator");
 const { stableJson } = require("../scripts/lib/deployment-evidence");
 
@@ -30,7 +31,7 @@ function purchase(byte, expiresAt) {
     purchaseId: hex(byte, 32),
     artifactHash: hex(`${Number.parseInt(byte, 16) + 1}`.padStart(2, "0"), 32),
     collectionId: hex("31", 32),
-    deedLauncherId: hex(byte === "11" ? "41" : "42", 32),
+    deedLauncherId: hex("41", 32),
     vaultLauncherId: hex("51", 32),
     vaultP2PuzzleHash: hex("52", 32),
     quoteExpiresAt: expiresAt,
@@ -118,6 +119,15 @@ function authorization(selected, job, laneName, globalPaymentId) {
 }
 
 describe("guided launch rehearsal coordinator", function () {
+  it("binds both outcomes to one canary deed while keeping payments unique", function () {
+    const selected = config(1_784_000_000);
+    expect(() => validateLanePair(selected.value.lanes)).not.to.throw();
+
+    selected.value.lanes.refund.purchaseArtifact.deedLauncherId = hex("42", 32);
+    expect(() => validateLanePair(selected.value.lanes))
+      .to.throw("same canary deedLauncherId");
+  });
+
   it("binds four reviewed wallet steps to one coadmin and seals both outcomes", async function () {
     const now = 1_784_000_000;
     const selected = config(now);
@@ -138,6 +148,7 @@ describe("guided launch rehearsal coordinator", function () {
       getTransaction: async (hash) => transactions.get(hash) || null,
       getTransactionReceipt: async (hash) => receipts.get(hash) || null,
       getBlockNumber: async () => 120,
+      getBlock: async () => ({ hash: hex("aa", 32) }),
     };
     const spoke = {
       interface: iface,
@@ -150,8 +161,19 @@ describe("guided launch rehearsal coordinator", function () {
         const laneName = globalPaymentId === globalIds.delivery ? "delivery" : "refund";
         const lane = selected.value.lanes[laneName];
         return {
+          localPaymentId: lane.localPaymentId,
+          purchaseId: lane.purchaseArtifact.purchaseId,
+          artifactHash: lane.purchaseArtifact.artifactHash,
+          collectionId: lane.purchaseArtifact.collectionId,
+          deedLauncherId: lane.purchaseArtifact.deedLauncherId,
+          vaultLauncherId: lane.purchaseArtifact.vaultLauncherId,
+          destinationPuzzle: lane.purchaseArtifact.vaultP2PuzzleHash,
+          settlementToken: BASE_SEPOLIA_USDC,
+          hubGateway: selected.value.activation.contracts.gateway,
           depositor: selected.wallet,
           amount: BigInt(lane.purchaseArtifact.railAmount),
+          quantity: 1n,
+          quoteExpiresAt: BigInt(lane.purchaseArtifact.quoteExpiresAt),
           status: laneName === "delivery" ? 3n : 4n,
           succeeded: laneName === "delivery",
         };
@@ -227,6 +249,7 @@ describe("guided launch rehearsal coordinator", function () {
       receipts.set(hash, {
         status: 1,
         blockNumber: 100,
+        blockHash: hex("aa", 32),
         logs,
       });
       status = await coordinator.submit(status.jobId, hash);
@@ -299,5 +322,110 @@ describe("guided launch rehearsal coordinator", function () {
     expect(stableJson(stored.walletTransaction)).to.equal(
       stableJson(status.walletTransaction),
     );
+  });
+
+  it("serializes simultaneous submissions for the same wallet step", async function () {
+    const now = 1_784_000_000;
+    const selected = config(now);
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "solslot-launch-rehearsal-"));
+    const transactions = new Map();
+    const provider = {
+      getNetwork: async () => ({ chainId: 84532n }),
+      getCode: async () => selected.runtimeCode,
+      getTransaction: async (hash) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return transactions.get(hash) || null;
+      },
+    };
+    const coordinator = new LaunchRehearsalCoordinator({
+      config: selected.value,
+      secrets: {
+        evidenceHmacSecret: "evidence-secret-that-is-at-least-32-characters",
+        settlementApiToken: "api-token-that-is-at-least-32-characters",
+      },
+      stateDirectory,
+      provider,
+      now: () => now,
+    });
+    const status = await coordinator.start({
+      ceremonyId: hex("e1", 32),
+      releaseTag: selected.value.releaseTag,
+      releaseEvidenceHash: selected.value.releaseEvidenceHash,
+      configHash: selected.value.configHash,
+      network: selected.value.network,
+      requiredLanes: ["delivery", "refund"],
+      walletAddress: selected.wallet,
+    });
+    for (const byte of ["0a", "0b"]) {
+      transactions.set(hex(byte, 32), {
+        from: selected.wallet,
+        to: status.walletTransaction.to,
+        value: 0n,
+        data: status.walletTransaction.data,
+        chainId: 84532,
+      });
+    }
+
+    const attempts = await Promise.allSettled([
+      coordinator.submit(status.jobId, hex("0a", 32)),
+      coordinator.submit(status.jobId, hex("0b", 32)),
+    ]);
+
+    expect(attempts.filter((item) => item.status === "fulfilled")).to.have.length(1);
+    expect(attempts.filter((item) => item.status === "rejected")).to.have.length(1);
+    expect(attempts.find((item) => item.status === "rejected").reason.message)
+      .to.equal("the rehearsal is not waiting for a wallet transaction");
+    expect(Object.keys(coordinator.readJob(status.jobId).transactions)).to.have.length(1);
+  });
+
+  it("rejects a confirmed transaction whose receipt block is not canonical", async function () {
+    const now = 1_784_000_000;
+    const selected = config(now);
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "solslot-launch-rehearsal-"));
+    const hash = hex("0c", 32);
+    let expected;
+    const provider = {
+      getNetwork: async () => ({ chainId: 84532n }),
+      getCode: async () => selected.runtimeCode,
+      getTransaction: async () => ({
+        from: selected.wallet,
+        to: expected.to,
+        value: 0n,
+        data: expected.data,
+        chainId: 84532,
+      }),
+      getTransactionReceipt: async () => ({
+        status: 1,
+        blockNumber: 100,
+        blockHash: hex("aa", 32),
+        logs: [],
+      }),
+      getBlockNumber: async () => 120,
+      getBlock: async () => ({ hash: hex("bb", 32) }),
+    };
+    const coordinator = new LaunchRehearsalCoordinator({
+      config: selected.value,
+      secrets: {
+        evidenceHmacSecret: "evidence-secret-that-is-at-least-32-characters",
+        settlementApiToken: "api-token-that-is-at-least-32-characters",
+      },
+      stateDirectory,
+      provider,
+      now: () => now,
+    });
+    const status = await coordinator.start({
+      ceremonyId: hex("e1", 32),
+      releaseTag: selected.value.releaseTag,
+      releaseEvidenceHash: selected.value.releaseEvidenceHash,
+      configHash: selected.value.configHash,
+      network: selected.value.network,
+      requiredLanes: ["delivery", "refund"],
+      walletAddress: selected.wallet,
+    });
+    expected = status.walletTransaction;
+    await coordinator.submit(status.jobId, hash);
+
+    await expect(coordinator.get(status.jobId))
+      .to.be.rejectedWith("receipt block could not be authenticated");
   });
 });

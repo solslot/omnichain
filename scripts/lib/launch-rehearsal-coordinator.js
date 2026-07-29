@@ -11,6 +11,7 @@ const {
 const {
   normalizePurchaseArtifact,
   tokenAddressFromAssetId,
+  validateDeposit,
 } = require("./settlement-rehearsal");
 const {
   PAYMENT_DEPOSITED_ABI,
@@ -22,6 +23,7 @@ const BASE_SEPOLIA_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const CONFIG_KIND = "solslot-rc22-launch-rehearsal-config";
 const EVIDENCE_KIND = "solslot-rc22-settlement-rehearsal";
 const MAX_JSON_BYTES = 256 * 1024;
+const MIN_REHEARSAL_QUOTE_SECONDS = 20 * 60;
 const HEX32 = /^0x[0-9a-f]{64}$/;
 const JOB_ID = /^rehearsal_[0-9a-f]{64}$/;
 const PHASES = {
@@ -143,6 +145,38 @@ function normalizedLane(value, name, activation) {
   };
 }
 
+function validateLanePair(lanes) {
+  const delivery = lanes.delivery;
+  const refund = lanes.refund;
+  const sharedFields = [
+    "railChainId",
+    "railAssetId",
+    "railAssetDecimals",
+    "railAmount",
+    "collectionId",
+    "deedLauncherId",
+    "vaultLauncherId",
+    "vaultP2PuzzleHash",
+  ];
+  for (const field of sharedFields) {
+    if (delivery.purchaseArtifact[field] !== refund.purchaseArtifact[field]) {
+      throw new Error(
+        `delivery and refund lanes must use the same canary ${field}`,
+      );
+    }
+  }
+  if (
+    delivery.localPaymentId === refund.localPaymentId
+    || delivery.purchaseArtifact.purchaseId === refund.purchaseArtifact.purchaseId
+    || delivery.purchaseArtifact.artifactHash === refund.purchaseArtifact.artifactHash
+  ) {
+    throw new Error(
+      "delivery and refund lanes require distinct payment and purchase identities",
+    );
+  }
+  return lanes;
+}
+
 function loadCoordinatorConfig(environment = process.env) {
   const activation = readEvidence(
     environment.SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_PATH,
@@ -216,13 +250,10 @@ function loadCoordinatorConfig(environment = process.env) {
   }
   exactKeys(payload.lanes, ["delivery", "refund"], "launch rehearsal lanes");
   const laneContext = { zero: `0x${"00".repeat(32)}` };
-  const lanes = {
+  const lanes = validateLanePair({
     delivery: normalizedLane(payload.lanes.delivery, "delivery", laneContext),
     refund: normalizedLane(payload.lanes.refund, "refund", laneContext),
-  };
-  if (lanes.delivery.purchaseArtifact.purchaseId === lanes.refund.purchaseArtifact.purchaseId) {
-    throw new Error("delivery and refund lanes require different purchase artifacts");
-  }
+  });
   return {
     activation,
     configHash,
@@ -373,6 +404,7 @@ class LaunchRehearsalCoordinator {
     this.fetchImplementation = fetchImplementation;
     this.now = now;
     this.contractFactory = contractFactory;
+    this.jobLocks = new Map();
   }
 
   jobPath(jobId) {
@@ -401,6 +433,26 @@ class LaunchRehearsalCoordinator {
     await verifyProvider(this.config, this.provider);
   }
 
+  async withJobLock(jobId, operation) {
+    if (!JOB_ID.test(jobId)) throw new Error("rehearsal job id is invalid");
+    const previous = this.jobLocks.get(jobId) || Promise.resolve();
+    let release;
+    const current = new Promise((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current);
+    this.jobLocks.set(jobId, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.jobLocks.get(jobId) === tail) {
+        this.jobLocks.delete(jobId);
+      }
+    }
+  }
+
   async start(value) {
     const request = exactRequest(value);
     const walletAddress = requiredAddress(request.walletAddress, "walletAddress");
@@ -416,32 +468,37 @@ class LaunchRehearsalCoordinator {
       throw new Error("rehearsal request differs from the signed release configuration");
     }
     for (const lane of Object.values(this.config.lanes)) {
-      if (lane.purchaseArtifact.quoteExpiresAt <= this.now() + 600) {
+      if (
+        lane.purchaseArtifact.quoteExpiresAt
+        <= this.now() + MIN_REHEARSAL_QUOTE_SECONDS
+      ) {
         throw new Error("rehearsal purchase artifact expires too soon");
       }
     }
     await this.verifyRuntime();
     const jobId = jobIdentifier({ ...request, walletAddress }, this.config);
-    if (fs.existsSync(this.jobPath(jobId))) {
-      return this.get(jobId);
-    }
-    const job = {
-      schemaVersion: 1,
-      jobId,
-      configHash: this.config.configHash,
-      ceremonyId: request.ceremonyId,
-      walletAddress,
-      phase: "APPROVE_DELIVERY",
-      pendingTransaction: null,
-      transactions: {},
-      lanes: {},
-      createdAt: this.now(),
-      updatedAt: this.now(),
-      error: null,
-    };
-    job.walletTransaction = this.approvalTransaction("delivery");
-    this.writeJob(job);
-    return this.render(job);
+    return this.withJobLock(jobId, async () => {
+      if (fs.existsSync(this.jobPath(jobId))) {
+        return this.getUnlocked(jobId);
+      }
+      const job = {
+        schemaVersion: 1,
+        jobId,
+        configHash: this.config.configHash,
+        ceremonyId: request.ceremonyId,
+        walletAddress,
+        phase: "APPROVE_DELIVERY",
+        pendingTransaction: null,
+        transactions: {},
+        lanes: {},
+        createdAt: this.now(),
+        updatedAt: this.now(),
+        error: null,
+      };
+      job.walletTransaction = this.approvalTransaction("delivery");
+      this.writeJob(job);
+      return this.render(job);
+    });
   }
 
   approvalTransaction(laneName) {
@@ -476,6 +533,10 @@ class LaunchRehearsalCoordinator {
   }
 
   async get(jobId) {
+    return this.withJobLock(jobId, () => this.getUnlocked(jobId));
+  }
+
+  async getUnlocked(jobId) {
     const job = this.readJob(jobId);
     if (job.pendingTransaction) {
       await this.confirmPending(job);
@@ -487,6 +548,13 @@ class LaunchRehearsalCoordinator {
   }
 
   async submit(jobId, transactionHash) {
+    return this.withJobLock(
+      jobId,
+      () => this.submitUnlocked(jobId, transactionHash),
+    );
+  }
+
+  async submitUnlocked(jobId, transactionHash) {
     const job = this.readJob(jobId);
     const phase = PHASES[job.phase];
     if (!["approve", "pay"].includes(phase.action) || !job.walletTransaction) {
@@ -543,6 +611,14 @@ class LaunchRehearsalCoordinator {
     }
     const latest = await this.provider.getBlockNumber();
     if (latest - receipt.blockNumber + 1 < this.config.confirmations) return;
+    const block = await this.provider.getBlock(receipt.blockNumber);
+    if (
+      !block
+      || !receipt.blockHash
+      || String(block.hash).toLowerCase() !== String(receipt.blockHash).toLowerCase()
+    ) {
+      throw new Error("rehearsal receipt block could not be authenticated");
+    }
     if (pending.action === "approve") {
       job.phase = pending.lane === "delivery" ? "PAY_DELIVERY" : "PAY_REFUND";
       job.walletTransaction = await this.paymentTransaction(
@@ -576,6 +652,21 @@ class LaunchRehearsalCoordinator {
         32,
         "globalPaymentId",
       );
+      const deposit = await spoke.getDeposit(globalPaymentId);
+      validateDeposit(
+        lane.purchaseArtifact,
+        globalPaymentId,
+        deposit,
+        deposits[0],
+      );
+      if (
+        ethers.getAddress(deposit.depositor).toLowerCase()
+          !== job.walletAddress.toLowerCase()
+        || ethers.getAddress(deposit.hubGateway)
+          !== ethers.getAddress(this.config.activation.contracts.gateway)
+      ) {
+        throw new Error("escrow deposit differs from the reviewed payer or gateway");
+      }
       const storedPaymentId = await spoke.globalPaymentForPurchase(
         lane.purchaseArtifact.purchaseId,
       );
@@ -768,10 +859,10 @@ class LaunchRehearsalCoordinator {
     else if (phase.action === "verify" || waitingAfterDelivery) state = "VALIDATING";
     else state = "AWAITING_WALLET";
     const labels = {
-      APPROVE_DELIVERY: ["Approve faucet USDC", "Allows only the fixed delivery-test amount."],
+      APPROVE_DELIVERY: ["Approve test USDC", "Allows only the fixed delivery-test amount."],
       PAY_DELIVERY: ["Send the delivery test", "The deed and approved test vault are fixed."],
       VERIFY_DELIVERY: ["Confirming SmartDeed delivery", "You can leave this page while the validators finish."],
-      APPROVE_REFUND: ["Approve faucet USDC", "Allows only the fixed refund-test amount."],
+      APPROVE_REFUND: ["Approve test USDC", "Allows only the fixed refund-test amount."],
       PAY_REFUND: ["Send the refund test", "The same payment route must return the exact amount."],
       VERIFY_REFUND: ["Confirming the exact refund", "The page will update when both networks agree."],
       COMPLETE: ["Customer payment path ready", "Delivery and exact refund evidence are sealed."],
@@ -814,6 +905,7 @@ module.exports = {
   EVIDENCE_KIND,
   JOB_ID,
   LaunchRehearsalCoordinator,
+  MIN_REHEARSAL_QUOTE_SECONDS,
   PHASES,
   SPOKE_ABI,
   TOKEN_ABI,
@@ -823,4 +915,5 @@ module.exports = {
   loadCoordinatorSecrets,
   readSecretFile,
   transactionShape,
+  validateLanePair,
 };
