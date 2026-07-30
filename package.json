@@ -16,7 +16,7 @@
     "deploy": "hardhat run scripts/deploy-omnichain.js",
     "deploy:warp-portal": "hardhat run scripts/deploy-warp-portal.js",
     "preflight:testnet": "hardhat run scripts/preflight-testnet-deployment.js",
-    "deploy:governance": "hardhat run scripts/deploy-alpha-governance.js",
+    "deploy:governance": "hardhat run scripts/deploy-authority-v3-governance.js",
     "attest:activation": "hardhat run scripts/attest-omnichain-activation.js",
     "prepare:ownership": "hardhat run scripts/prepare-ownership-activation.js",
     "prepare:ownership-safe": "hardhat run scripts/prepare-ownership-safe-operation.js",

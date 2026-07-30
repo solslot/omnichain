@@ -12,7 +12,15 @@ contract SolslotOwnerIdentitySetup {
     error SetupCallFailed();
 
     function configureOwner(address recoveryModule, address ownerGuard) external {
-        if (recoveryModule == address(0) || ownerGuard == address(0)) {
+        _configureIdentity(recoveryModule, ownerGuard);
+    }
+
+    function configureIdentity(address recoveryModule, address identityGuard) external {
+        _configureIdentity(recoveryModule, identityGuard);
+    }
+
+    function _configureIdentity(address recoveryModule, address identityGuard) private {
+        if (recoveryModule == address(0) || identityGuard == address(0)) {
             revert InvalidSetupAddress();
         }
         (bool moduleEnabled,) = address(this).call(
@@ -20,7 +28,7 @@ contract SolslotOwnerIdentitySetup {
         );
         if (!moduleEnabled) revert SetupCallFailed();
         (bool guardEnabled,) = address(this).call(
-            abi.encodeCall(ISolslotOwnerSafeSetup.setGuard, (ownerGuard))
+            abi.encodeCall(ISolslotOwnerSafeSetup.setGuard, (identityGuard))
         );
         if (!guardEnabled) revert SetupCallFailed();
     }
