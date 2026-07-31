@@ -42,7 +42,7 @@
   },
   "homepage": "https://github.com/solomonslot/omnichain#readme",
   "dependencies": {
-    "ethers": "6.14.0"
+    "ethers": "6.17.0"
   },
   "devDependencies": {
     "@chainlink/contracts-ccip": "1.6.4",
