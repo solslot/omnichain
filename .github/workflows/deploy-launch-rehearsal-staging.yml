@@ -59,6 +59,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           npm ci
+          npm run security:audit-production
           npm run build
           npm test
           node --check scripts/serve-launch-rehearsal.js

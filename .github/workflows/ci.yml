@@ -18,6 +18,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Reject production dependency advisories
+        run: npm run security:audit-production
       - name: Compile contracts
         run: npm run build
       - name: Run contract and evidence tests
