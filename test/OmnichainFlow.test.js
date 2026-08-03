@@ -61,6 +61,7 @@ async function deposit(
   purchaseId = PURCHASE_ID,
   artifactHash = ARTIFACT_HASH,
   expiryOffset = 300,
+  quantity = QUANTITY,
 ) {
   const fee = system.spokeSelector === BASE_SELECTOR ? 0n : ROUTER_FEE;
   const block = await ethers.provider.getBlock("latest");
@@ -75,7 +76,7 @@ async function deposit(
     VAULT_LAUNCHER_ID,
     DESTINATION_PUZZLE,
     AMOUNT,
-    QUANTITY,
+    quantity,
     quoteExpiresAt,
     { value: fee },
   );
@@ -176,6 +177,62 @@ describe("SolSlot CCIP-to-Warp omnichain flow", function () {
 
     await system.spoke.settle(globalPaymentId);
     expect(await system.token.balanceOf(system.payout.address)).to.equal(AMOUNT);
+  });
+
+  it("binds one Base payment to a multi-SmartDeed batch commitment", async function () {
+    const system = await deploySystem(true);
+    const batchPurchaseId = ethers.id("batch-purchase");
+    const batchHash = ethers.id("canonical-smartdeed-batch");
+    const globalPaymentId = await deposit(
+      system,
+      ethers.id("batch-payment"),
+      system.usdc,
+      batchPurchaseId,
+      batchHash,
+      300,
+      25n,
+    );
+    const escrowed = await system.spoke.getDeposit(globalPaymentId);
+    expect(escrowed.quantity).to.equal(25n);
+    expect(escrowed.artifactHash).to.equal(batchHash);
+
+    await relayRequest(system);
+    const queued = await system.gateway.getRequest(globalPaymentId);
+    expect(queued.request.quantity).to.equal(25n);
+    expect(queued.request.purchaseId).to.equal(batchPurchaseId);
+    expect(queued.request.artifactHash).to.equal(batchHash);
+  });
+
+  it("accepts a governed SGT amount but rejects zero and over-supply quantities", async function () {
+    const sgt = await deploySystem(false);
+    const sgtPaymentId = await deposit(
+      sgt,
+      ethers.id("sgt-quantity"),
+      sgt.usdc,
+      ethers.id("sgt-purchase"),
+      ethers.id("sgt-artifact"),
+      300,
+      25_000n,
+    );
+    expect((await sgt.spoke.getDeposit(sgtPaymentId)).quantity).to.equal(25_000n);
+
+    const zero = await deploySystem(false);
+    await expect(
+      deposit(zero, ethers.id("zero-quantity"), zero.usdc, PURCHASE_ID, ARTIFACT_HASH, 300, 0n),
+    ).to.be.revertedWithCustomError(zero.spoke, "InvalidPayment");
+
+    const overCap = await deploySystem(false);
+    await expect(
+      deposit(
+        overCap,
+        ethers.id("over-cap"),
+        overCap.usdc,
+        PURCHASE_ID,
+        ARTIFACT_HASH,
+        300,
+        1_000_001n,
+      ),
+    ).to.be.revertedWithCustomError(overCap.spoke, "InvalidPayment");
   });
 
   it("refunds only the original depositor after a failed result", async function () {

@@ -16,6 +16,10 @@ import {ILocalGateway, ILocalSpoke} from "./interfaces/ILocalOmnichain.sol";
 contract OmnichainEscrowSpoke is CCIPReceiver, ILocalSpoke, Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    // The generic field is either a SmartDeed count (server-capped at 100) or
+    // one vault-locked SGT CAT amount (permanently capped by total supply).
+    uint256 public constant MAX_DELIVERY_QUANTITY = 1_000_000;
+
     enum Status {
         None,
         RequestSent,
@@ -425,7 +429,8 @@ contract OmnichainEscrowSpoke is CCIPReceiver, ILocalSpoke, Ownable2Step, Pausab
             vaultLauncherId == bytes32(0) ||
             destinationPuzzle == bytes32(0) ||
             amount == 0 ||
-            quantity != 1 ||
+            quantity == 0 ||
+            quantity > MAX_DELIVERY_QUANTITY ||
             quoteExpiresAt <= block.timestamp ||
             quoteExpiresAt > block.timestamp + 30 minutes ||
             depositor == address(0)

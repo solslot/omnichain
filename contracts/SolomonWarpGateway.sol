@@ -12,6 +12,9 @@ import {IWarpPortal} from "./interfaces/IWarpPortal.sol";
 import {ILocalGateway, ILocalSpoke} from "./interfaces/ILocalOmnichain.sol";
 
 contract SolomonWarpGateway is CCIPReceiver, ILocalGateway, Ownable2Step, Pausable, ReentrancyGuard {
+    // SmartDeed batches are capped more tightly by their signed artifact.
+    // This transport also carries a single vault-locked SGT CAT amount.
+    uint256 public constant MAX_DELIVERY_QUANTITY = 1_000_000;
     enum Status {
         None,
         Queued,
@@ -290,7 +293,8 @@ contract SolomonWarpGateway is CCIPReceiver, ILocalGateway, Ownable2Step, Pausab
             request.vaultLauncherId == bytes32(0) ||
             request.destinationPuzzle == bytes32(0) ||
             request.amount == 0 ||
-            request.quantity != 1 ||
+            request.quantity == 0 ||
+            request.quantity > MAX_DELIVERY_QUANTITY ||
             request.quoteExpiresAt <= block.timestamp ||
             trustedSpokes[request.originChainSelector] != request.originSpoke ||
             request.globalPaymentId != OmnichainMessageCodec.deriveGlobalPaymentId(

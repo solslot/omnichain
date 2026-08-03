@@ -6,6 +6,7 @@ const {
 } = require("./escrow-relayer");
 
 const AUTHORIZATION_SCHEMA = "solslot.base-voucher-settlement-authorization.v2";
+const DIRECT_AUTHORIZATION_SCHEMA = "solslot.base-direct-settlement-authorization.v1";
 const GATEWAY_ABI = [
   "function getRequest(bytes32 globalPaymentId) view returns (((uint64 originChainSelector,address originSpoke,bytes32 globalPaymentId,bytes32 purchaseId,bytes32 artifactHash,uint256 amount,uint256 quantity,bytes32 collectionId,bytes32 deedLauncherId,bytes32 vaultLauncherId,bytes32 destinationPuzzle,uint64 hubChainSelector,address hubGateway,uint64 quoteExpiresAt) request,bytes32 inboundMessageId,bytes32 outboundMessageId,bytes32 warpNonce,uint64 queuedAt,uint8 status,bool succeeded))",
   "function forwardResult(bytes32 globalPaymentId) returns (bytes32 messageId)",
@@ -79,9 +80,27 @@ function loadSettlementConfig(config, environment = process.env) {
   ) {
     throw new Error("activation evidence lacks the gateway or payout Safe");
   }
+  const directSettlementUrl = String(
+    environment.SOLSLOT_BASE_DIRECT_SETTLEMENT_URL
+    || settlementUrl.replace(
+      /\/presales\/base-settlements$/,
+      "/protocol/stripe-deliveries/base-settlements",
+    ),
+  ).trim();
+  if (
+    !directSettlementUrl.startsWith("https://")
+    || !directSettlementUrl.endsWith(
+      "/protocol/stripe-deliveries/base-settlements",
+    )
+  ) {
+    throw new Error(
+      "SOLSLOT_BASE_DIRECT_SETTLEMENT_URL must be the HTTPS direct settlement API URL",
+    );
+  }
   return {
     ...config,
     settlementUrl,
+    directSettlementUrl,
     privateKey,
   };
 }
@@ -99,20 +118,31 @@ async function readJsonResponse(response, label) {
 }
 
 async function pendingAuthorizations(config, fetchImplementation = fetch) {
-  const response = await fetchImplementation(`${config.settlementUrl}/pending?limit=100`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${config.callbackToken}` },
-    signal: AbortSignal.timeout(20000),
-  });
-  const body = await readJsonResponse(response, "settlement authorization API");
-  if (
-    !response.ok
-    || body.schema !== AUTHORIZATION_SCHEMA
-    || !Array.isArray(body.authorizations)
-  ) {
-    throw new Error(`settlement authorization API rejected HTTP ${response.status}`);
+  const sources = [
+    [config.settlementUrl, AUTHORIZATION_SCHEMA],
+    [config.directSettlementUrl, DIRECT_AUTHORIZATION_SCHEMA],
+  ];
+  const authorizations = [];
+  for (const [url, schema] of sources) {
+    if (!String(url || "").startsWith("https://")) {
+      throw new Error("Base settlement API URLs must use HTTPS");
+    }
+    const response = await fetchImplementation(`${url}/pending?limit=100`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${config.callbackToken}` },
+      signal: AbortSignal.timeout(20000),
+    });
+    const body = await readJsonResponse(response, "settlement authorization API");
+    if (
+      !response.ok
+      || body.schema !== schema
+      || !Array.isArray(body.authorizations)
+    ) {
+      throw new Error(`settlement authorization API rejected HTTP ${response.status}`);
+    }
+    authorizations.push(...body.authorizations);
   }
-  return body.authorizations;
+  return authorizations;
 }
 
 function validateAuthorization(envelope, activation, deposit) {
@@ -129,33 +159,56 @@ function validateAuthorization(envelope, activation, deposit) {
     ],
     "settlement authorization envelope",
   );
+  const direct = envelope.authorization?.schema === DIRECT_AUTHORIZATION_SCHEMA;
   const authorization = exactKeys(
     envelope.authorization,
-    [
-      "schema",
-      "outcome",
-      "globalPaymentId",
-      "purchaseId",
-      "purchaseArtifactHash",
-      "termsHash",
-      "seriesSingletonId",
-      "collectionId",
-      "metadataRoot",
-      "allocationRoot",
-      "serial",
-      "deedLauncherId",
-      "vaultLauncherId",
-      "vaultP2PuzzleHash",
-      "originalPayer",
-      "payment",
-      "chia",
-    ],
+    direct
+      ? [
+        "schema",
+        "outcome",
+        "globalPaymentId",
+        "purchaseId",
+        "purchaseArtifactHash",
+        "deliveryKind",
+        "deliveryAssetId",
+        "deliveryAssetIds",
+        "deliveryAmount",
+        "deliveryContextHash",
+        "vaultLauncherId",
+        "vaultP2PuzzleHash",
+        "originalPayer",
+        "payment",
+        "chia",
+      ]
+      : [
+        "schema",
+        "outcome",
+        "globalPaymentId",
+        "purchaseId",
+        "purchaseArtifactHash",
+        "termsHash",
+        "seriesSingletonId",
+        "collectionId",
+        "metadataRoot",
+        "allocationRoot",
+        "serial",
+        "deedLauncherId",
+        "vaultLauncherId",
+        "vaultP2PuzzleHash",
+        "originalPayer",
+        "payment",
+        "chia",
+      ],
     "settlement authorization",
   );
   if (
     envelope.state !== "PENDING"
-    || authorization.schema !== AUTHORIZATION_SCHEMA
-    || !["DELIVERED", "REFUND"].includes(authorization.outcome)
+    || ![AUTHORIZATION_SCHEMA, DIRECT_AUTHORIZATION_SCHEMA].includes(
+      authorization.schema,
+    )
+    || (direct
+      ? authorization.outcome !== "DELIVERED"
+      : !["DELIVERED", "REFUND"].includes(authorization.outcome))
   ) {
     throw new Error("settlement authorization state or outcome is invalid");
   }
@@ -166,7 +219,15 @@ function validateAuthorization(envelope, activation, deposit) {
   ) {
     throw new Error("settlement authorization hash changed");
   }
-  const bindings = [
+  const bindings = direct ? [
+    ["globalPaymentId", deposit.globalPaymentId],
+    ["purchaseId", deposit.purchaseId],
+    ["purchaseArtifactHash", deposit.artifactHash],
+    ["deliveryContextHash", deposit.collectionId],
+    ["deliveryAssetId", deposit.deedLauncherId],
+    ["vaultLauncherId", deposit.vaultLauncherId],
+    ["vaultP2PuzzleHash", deposit.destinationPuzzle],
+  ] : [
     ["globalPaymentId", deposit.globalPaymentId],
     ["purchaseId", deposit.purchaseId],
     ["purchaseArtifactHash", deposit.artifactHash],
@@ -212,7 +273,76 @@ function validateAuthorization(envelope, activation, deposit) {
     throw new Error("settlement payment differs from the escrow deposit");
   }
   requiredHex(payment.evidenceHash, 32, "payment evidence hash");
-  return { envelope, authorization, succeeded: authorization.outcome === "DELIVERED" };
+  if (direct) {
+    const assetIds = authorization.deliveryAssetIds;
+    const chia = exactKeys(
+      authorization.chia,
+      [
+        "spendBundleId",
+        "confirmedHeight",
+        "externalReceiptInputCoinId",
+        "deliveryInputCoinId",
+        "deliveryInputCoinIds",
+        "deliveryOutputCoinId",
+        "deliveryOutputCoinIds",
+        "resultAuthorizationCoinId",
+        "resultAuthorizationCoinIds",
+      ],
+      "direct Chia settlement evidence",
+    );
+    const quantity = uintFromChain(deposit.quantity, "deposit quantity");
+    const expectedManifestLength = authorization.deliveryKind === "SMARTDEED"
+      ? quantity
+      : 1;
+    if (
+      !["SMARTDEED", "SGT"].includes(authorization.deliveryKind)
+      || exactInteger(authorization.deliveryAmount, "delivery amount", 1)
+        !== quantity
+      || !Array.isArray(assetIds)
+      || assetIds.length !== expectedManifestLength
+      || new Set(assetIds.map(
+        (value) => requiredHex(value, 32, "delivery asset ID"),
+      )).size !== expectedManifestLength
+      || requiredHex(assetIds[0], 32, "first delivery asset ID")
+        !== requiredHex(authorization.deliveryAssetId, 32, "deliveryAssetId")
+    ) {
+      throw new Error("direct delivery differs from the escrow deposit");
+    }
+    for (const [singular, plural, label] of [
+      [chia.deliveryInputCoinId, chia.deliveryInputCoinIds, "delivery input"],
+      [chia.deliveryOutputCoinId, chia.deliveryOutputCoinIds, "delivery output"],
+      [
+        chia.resultAuthorizationCoinId,
+        chia.resultAuthorizationCoinIds,
+        "result authorization",
+      ],
+    ]) {
+      if (
+        !Array.isArray(plural)
+        || plural.length !== expectedManifestLength
+        || new Set(plural.map(
+          (value) => requiredHex(value, 32, `${label} coin ID`),
+        )).size !== expectedManifestLength
+        || requiredHex(singular, 32, `${label} coin ID`)
+          !== requiredHex(plural[0], 32, `first ${label} coin ID`)
+      ) {
+        throw new Error(`direct ${label} manifest is invalid`);
+      }
+    }
+    requiredHex(chia.spendBundleId, 32, "Chia spend bundle ID");
+    requiredHex(
+      chia.externalReceiptInputCoinId,
+      32,
+      "external receipt input coin ID",
+    );
+    exactInteger(chia.confirmedHeight, "Chia confirmation height", 1);
+  }
+  return {
+    envelope,
+    authorization,
+    direct,
+    succeeded: authorization.outcome === "DELIVERED",
+  };
 }
 
 async function verifySettlementProvider(config, provider) {
@@ -228,7 +358,16 @@ async function verifySettlementProvider(config, provider) {
 
 function validateGatewayRequest(authorization, gatewayRecord, succeeded) {
   const request = gatewayRecord.request;
-  const bindings = [
+  const direct = authorization.schema === DIRECT_AUTHORIZATION_SCHEMA;
+  const bindings = direct ? [
+    ["globalPaymentId", request.globalPaymentId],
+    ["purchaseId", request.purchaseId],
+    ["purchaseArtifactHash", request.artifactHash],
+    ["deliveryContextHash", request.collectionId],
+    ["deliveryAssetId", request.deedLauncherId],
+    ["vaultLauncherId", request.vaultLauncherId],
+    ["vaultP2PuzzleHash", request.destinationPuzzle],
+  ] : [
     ["globalPaymentId", request.globalPaymentId],
     ["purchaseId", request.purchaseId],
     ["purchaseArtifactHash", request.artifactHash],
@@ -244,7 +383,8 @@ function validateGatewayRequest(authorization, gatewayRecord, succeeded) {
   }
   if (
     uintFromChain(request.amount, "gateway amount") !== authorization.payment.principal
-    || uintFromChain(request.quantity, "gateway quantity") !== 1
+    || uintFromChain(request.quantity, "gateway quantity")
+      !== (direct ? authorization.deliveryAmount : 1)
     || (uintFromChain(gatewayRecord.status, "gateway status") >= 3
       && gatewayRecord.succeeded !== succeeded)
   ) {
@@ -322,8 +462,13 @@ async function acknowledgeAuthorization(
   evidence,
   fetchImplementation = fetch,
 ) {
+  const settlementUrl = (
+    envelope.authorization.schema === DIRECT_AUTHORIZATION_SCHEMA
+      ? config.directSettlementUrl
+      : config.settlementUrl
+  );
   const response = await fetchImplementation(
-    `${config.settlementUrl}/${envelope.authorizationId}/relay-evidence`,
+    `${settlementUrl}/${envelope.authorizationId}/relay-evidence`,
     {
       method: "POST",
       headers: {
@@ -471,6 +616,7 @@ async function runBaseSettlements(
 
 module.exports = {
   AUTHORIZATION_SCHEMA,
+  DIRECT_AUTHORIZATION_SCHEMA,
   GATEWAY_ABI,
   acknowledgeAuthorization,
   canonicalJson,
