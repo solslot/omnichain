@@ -1,5 +1,4 @@
 const http = require("node:http");
-const { ethers } = require("ethers");
 
 const {
   LaunchRehearsalCoordinator,
@@ -50,24 +49,16 @@ async function main(environment = process.env) {
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) {
     throw new Error("launch rehearsal port is invalid");
   }
-  const rpcUrl = String(environment.SOLSLOT_LAUNCH_REHEARSAL_RPC_URL || "");
-  if (!rpcUrl.startsWith("https://")) {
-    throw new Error("SOLSLOT_LAUNCH_REHEARSAL_RPC_URL must use HTTPS");
-  }
   const stateDirectory = String(environment.SOLSLOT_LAUNCH_REHEARSAL_STATE_DIR || "");
   if (!stateDirectory) {
     throw new Error("SOLSLOT_LAUNCH_REHEARSAL_STATE_DIR is required");
   }
   const config = loadCoordinatorConfig(environment);
   const secrets = loadCoordinatorSecrets(environment);
-  const provider = new ethers.JsonRpcProvider(rpcUrl, config.activation.chainId, {
-    staticNetwork: true,
-  });
   const coordinator = new LaunchRehearsalCoordinator({
     config,
     secrets,
     stateDirectory,
-    provider,
   });
   await coordinator.verifyRuntime();
 
@@ -101,15 +92,9 @@ async function main(environment = process.env) {
         return;
       }
       if (request.method === "POST" && url.pathname.endsWith("/transactions")) {
-        const body = await readBody(request);
-        if (!body || Object.keys(body).length !== 1 || !body.transactionHash) {
-          throw new Error("transaction submission fields are invalid");
-        }
-        send(
-          response,
-          200,
-          await coordinator.submit(match[1], body.transactionHash),
-        );
+        send(response, 410, {
+          detail: "RC27 observes the normal Stripe voucher journey and never accepts an administrator wallet transaction.",
+        });
         return;
       }
       send(response, 405, { detail: "method not allowed" });
