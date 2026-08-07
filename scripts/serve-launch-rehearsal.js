@@ -7,6 +7,8 @@ const {
 } = require("./lib/launch-rehearsal-coordinator");
 
 const MAX_BODY_BYTES = 64 * 1024;
+const DEFAULT_PORT = 8794;
+const KEY_OF_SOLOMON_PORT = 8793;
 
 async function readBody(request) {
   const chunks = [];
@@ -40,15 +42,23 @@ function authorized(request, token) {
     && require("node:crypto").timingSafeEqual(left, right);
 }
 
-async function main(environment = process.env) {
+function resolveListener(environment = process.env) {
   const host = String(environment.SOLSLOT_LAUNCH_REHEARSAL_HOST || "127.0.0.1");
-  const port = Number(environment.SOLSLOT_LAUNCH_REHEARSAL_PORT || 8793);
+  const port = Number(environment.SOLSLOT_LAUNCH_REHEARSAL_PORT || DEFAULT_PORT);
   if (!["127.0.0.1", "::1"].includes(host)) {
     throw new Error("launch rehearsal service must bind to loopback");
   }
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) {
     throw new Error("launch rehearsal port is invalid");
   }
+  if (port === KEY_OF_SOLOMON_PORT) {
+    throw new Error("launch rehearsal port 8793 is reserved for Key of Solomon");
+  }
+  return { host, port };
+}
+
+async function main(environment = process.env) {
+  const { host, port } = resolveListener(environment);
   const stateDirectory = String(environment.SOLSLOT_LAUNCH_REHEARSAL_STATE_DIR || "");
   if (!stateDirectory) {
     throw new Error("SOLSLOT_LAUNCH_REHEARSAL_STATE_DIR is required");
@@ -120,4 +130,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { authorized, main, readBody, send };
+module.exports = { authorized, main, readBody, resolveListener, send };
