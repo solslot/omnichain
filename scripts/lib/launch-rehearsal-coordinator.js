@@ -2,7 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { sha256, stableJson } = require("./deployment-evidence");
+const { readEvidence, sha256, stableJson } = require("./deployment-evidence");
 
 const CONFIG_KIND = "solslot-rc27-stripe-voucher-rehearsal-config";
 const EVIDENCE_KIND = "solslot-rc27-stripe-voucher-rehearsal";
@@ -157,6 +157,36 @@ function loadCoordinatorConfig(environment = process.env) {
     validatorThreshold: 2,
     validators,
   };
+}
+
+function loadActivationEvidence(environment = process.env) {
+  const activation = readEvidence(
+    environment.SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_PATH,
+    "activation",
+  );
+  if (
+    activation.schemaVersion !== 3
+    || activation.kind !== "ccip-warp-escrow-activation"
+    || activation.ownershipAccepted !== true
+    || activation.chainId !== 11155111
+    || !/^[0-9a-f]{40}$/.test(String(activation.sourceSha || ""))
+    || !/^[a-z0-9_-]{1,32}$/.test(String(activation.gatewayProfile || ""))
+  ) {
+    throw new Error("activation evidence is not usable by the launch rehearsal");
+  }
+  const contracts = activation.contracts || {};
+  const runtimeCodeHashes = activation.runtimeCodeHashes || {};
+  for (const [label, address] of Object.entries({
+    gateway: contracts.gateway,
+    spoke: contracts.spoke,
+  })) {
+    if (!/^0x[0-9a-f]{40}$/i.test(String(address || ""))
+        || /^0x0{40}$/i.test(String(address))) {
+      throw new Error(`activation ${label} address is invalid`);
+    }
+    requiredHex32(runtimeCodeHashes[label], `activation ${label} runtime hash`);
+  }
+  return activation;
 }
 
 function loadCoordinatorSecrets(environment = process.env) {
@@ -522,6 +552,7 @@ module.exports = {
   PHASES,
   exactRequest,
   jobIdentifier,
+  loadActivationEvidence,
   loadCoordinatorConfig,
   loadCoordinatorSecrets,
   normalizedLane,

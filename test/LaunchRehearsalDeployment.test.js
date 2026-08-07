@@ -51,4 +51,14 @@ describe("launch rehearsal staging deployment", function () {
       "ExecStart=/usr/bin/node scripts/serve-launch-rehearsal.js",
     );
   });
+
+  it("runs a read-only readiness gate as the service account before activation", function () {
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const readiness = '"$node_bin" scripts/lib/launch-rehearsal-readiness.js';
+    const enable = 'sudo systemctl enable "$service"';
+
+    expect(workflow).to.include('sudo -u "$service_user" env');
+    expect(workflow).to.include(readiness);
+    expect(workflow.indexOf(readiness)).to.be.lessThan(workflow.indexOf(enable));
+  });
 });
