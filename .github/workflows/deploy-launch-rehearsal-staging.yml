@@ -27,7 +27,9 @@ env:
   SERVICE_NAME: ${{ vars.SOLSLOT_REHEARSAL_SERVICE || 'solslot-launch-rehearsal-staging.service' }}
   SERVICE_USER: ${{ vars.SOLSLOT_API_SYSTEMD_USER || 'solslot-api' }}
   EXPECTED_HOSTNAME: ${{ vars.SOLSLOT_API_HOSTNAME || 'SolomonsLot' }}
-  SERVICE_PORT: ${{ vars.SOLSLOT_REHEARSAL_PORT || '8793' }}
+  SERVICE_PORT: ${{ vars.SOLSLOT_REHEARSAL_PORT || '8794' }}
+  NODE_BIN: ${{ vars.SOLSLOT_REHEARSAL_NODE_BIN || '/opt/solslot/runtime/node-v22.23.2/bin/node' }}
+  EXPECTED_NODE_VERSION: ${{ vars.SOLSLOT_REHEARSAL_NODE_VERSION || 'v22.23.2' }}
 
 jobs:
   build:
@@ -119,6 +121,9 @@ jobs:
         env:
           ACTIVATE_SERVICE: ${{ inputs.activate_service }}
           RELEASE_SHA: ${{ inputs.release_sha }}
+          NODE_BIN: ${{ env.NODE_BIN }}
+          EXPECTED_NODE_VERSION: ${{ env.EXPECTED_NODE_VERSION }}
+          SERVICE_PORT: ${{ env.SERVICE_PORT }}
         with:
           host: ${{ secrets.STAGING_SERVER_IP }}
           username: ${{ secrets.STAGING_SSH_USER }}
@@ -126,7 +131,7 @@ jobs:
           passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
           port: 22
           command_timeout: 15m
-          envs: ACTIVATE_SERVICE,RELEASE_SHA
+          envs: ACTIVATE_SERVICE,RELEASE_SHA,NODE_BIN,EXPECTED_NODE_VERSION,SERVICE_PORT
           script: |
             set -euo pipefail
             test "$(hostname)" = "${{ env.EXPECTED_HOSTNAME }}"
@@ -138,7 +143,41 @@ jobs:
             service_user="${{ env.SERVICE_USER }}"
             state_dir="$shared_root/state"
             env_file="${{ env.ENV_FILE }}"
-            service_port="${{ env.SERVICE_PORT }}"
+            service_port="$SERVICE_PORT"
+            node_bin="$NODE_BIN"
+            expected_node_version="$EXPECTED_NODE_VERSION"
+
+            case "$service_port" in
+              ''|*[!0-9]*)
+                echo "SOLSLOT_REHEARSAL_PORT must be a numeric TCP port" >&2
+                exit 1
+                ;;
+            esac
+            test "$service_port" -ge 1024
+            test "$service_port" -le 65535
+            if [ "$service_port" = "8793" ]; then
+              echo "Port 8793 is reserved for Key of Solomon; use the rehearsal port 8794" >&2
+              exit 1
+            fi
+
+            case "$node_bin" in
+              /*) ;;
+              *)
+                echo "SOLSLOT_REHEARSAL_NODE_BIN must be an absolute path" >&2
+                exit 1
+                ;;
+            esac
+            case "$node_bin" in
+              *[[:space:]]*)
+                echo "SOLSLOT_REHEARSAL_NODE_BIN cannot contain whitespace" >&2
+                exit 1
+                ;;
+            esac
+            test -x "$node_bin"
+            test "$("$node_bin" --version)" = "$expected_node_version"
+            node_dir="$(dirname "$node_bin")"
+            npm_bin="$node_dir/npm"
+            test -x "$npm_bin"
 
             id "$service_user" >/dev/null 2>&1
             sudo mkdir -p "$release_root/releases" "$state_dir"
@@ -151,9 +190,9 @@ jobs:
               mkdir -p "$release_dir"
               tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$release_dir"
               cd "$release_dir"
-              test "$(node -p 'require("./release.json").commit')" = "$RELEASE_SHA"
-              npm ci --omit=dev --ignore-scripts
-              node --check scripts/serve-launch-rehearsal.js
+              test "$("$node_bin" -p 'require("./release.json").commit')" = "$RELEASE_SHA"
+              PATH="$node_dir:$PATH" "$npm_bin" ci --omit=dev --ignore-scripts
+              "$node_bin" --check scripts/serve-launch-rehearsal.js
               touch .release-ready
             fi
 
@@ -175,7 +214,7 @@ jobs:
             Environment=SOLSLOT_LAUNCH_REHEARSAL_HOST=127.0.0.1
             Environment=SOLSLOT_LAUNCH_REHEARSAL_PORT=$service_port
             Environment=SOLSLOT_LAUNCH_REHEARSAL_STATE_DIR=$state_dir
-            ExecStart=/usr/bin/node scripts/serve-launch-rehearsal.js
+            ExecStart=$node_bin scripts/serve-launch-rehearsal.js
             Restart=on-failure
             RestartSec=5
             NoNewPrivileges=true
