@@ -242,6 +242,50 @@ jobs:
               sudo grep -q '^SOLSLOT_LAUNCH_REHEARSAL_TOKEN_FILE=' "$env_file"
               sudo grep -q '^SOLSLOT_LAUNCH_REHEARSAL_HMAC_FILE=' "$env_file"
               sudo grep -q '^SOLSLOT_LAUNCH_REHEARSAL_API_TOKEN_FILE=' "$env_file"
+              read_env_path() {
+                local key="$1"
+                local value
+                value="$(sudo awk -v key="$key" '
+                  index($0, key "=") == 1 {
+                    count += 1
+                    value = substr($0, length(key) + 2)
+                  }
+                  END {
+                    if (count == 1) print value
+                    else exit 1
+                  }
+                ' "$env_file")"
+                case "$value" in
+                  /*) ;;
+                  *)
+                    echo "$key must contain one absolute path" >&2
+                    exit 1
+                    ;;
+                esac
+                case "$value" in
+                  *[[:space:]]*)
+                    echo "$key cannot contain whitespace" >&2
+                    exit 1
+                    ;;
+                esac
+                printf '%s' "$value"
+              }
+              config_path="$(read_env_path SOLSLOT_LAUNCH_REHEARSAL_CONFIG_PATH)"
+              activation_path="$(read_env_path SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_PATH)"
+              token_path="$(read_env_path SOLSLOT_LAUNCH_REHEARSAL_TOKEN_FILE)"
+              hmac_path="$(read_env_path SOLSLOT_LAUNCH_REHEARSAL_HMAC_FILE)"
+              api_token_path="$(read_env_path SOLSLOT_LAUNCH_REHEARSAL_API_TOKEN_FILE)"
+              cd "$release_root/current"
+              sudo -u "$service_user" env \
+                SOLSLOT_LAUNCH_REHEARSAL_CONFIG_PATH="$config_path" \
+                SOLSLOT_OMNICHAIN_ACTIVATION_EVIDENCE_PATH="$activation_path" \
+                SOLSLOT_LAUNCH_REHEARSAL_TOKEN_FILE="$token_path" \
+                SOLSLOT_LAUNCH_REHEARSAL_HMAC_FILE="$hmac_path" \
+                SOLSLOT_LAUNCH_REHEARSAL_API_TOKEN_FILE="$api_token_path" \
+                SOLSLOT_LAUNCH_REHEARSAL_STATE_DIR="$state_dir" \
+                SOLSLOT_LAUNCH_REHEARSAL_HOST=127.0.0.1 \
+                SOLSLOT_LAUNCH_REHEARSAL_PORT="$service_port" \
+                "$node_bin" scripts/lib/launch-rehearsal-readiness.js
               sudo systemctl enable "$service"
               sudo systemctl restart "$service"
               for attempt in $(seq 1 30); do

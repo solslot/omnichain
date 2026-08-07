@@ -2,6 +2,7 @@ const http = require("node:http");
 
 const {
   LaunchRehearsalCoordinator,
+  loadActivationEvidence,
   loadCoordinatorConfig,
   loadCoordinatorSecrets,
 } = require("./lib/launch-rehearsal-coordinator");
@@ -64,6 +65,7 @@ async function main(environment = process.env) {
     throw new Error("SOLSLOT_LAUNCH_REHEARSAL_STATE_DIR is required");
   }
   const config = loadCoordinatorConfig(environment);
+  const activation = loadActivationEvidence(environment);
   const secrets = loadCoordinatorSecrets(environment);
   const coordinator = new LaunchRehearsalCoordinator({
     config,
@@ -75,11 +77,20 @@ async function main(environment = process.env) {
   const server = http.createServer(async (request, response) => {
     try {
       if (request.url === "/health" && request.method === "GET") {
+        const observedConfig = loadCoordinatorConfig(environment);
+        const observedActivation = loadActivationEvidence(environment);
+        if (observedConfig.configHash !== config.configHash) {
+          throw new Error("launch rehearsal config changed after startup");
+        }
+        if (observedActivation.artifactHash !== activation.artifactHash) {
+          throw new Error("activation evidence changed after startup");
+        }
         await coordinator.verifyRuntime();
         send(response, 200, {
           healthy: true,
           configHash: config.configHash,
           releaseTag: config.releaseTag,
+          activationArtifactHash: activation.artifactHash,
         });
         return;
       }
@@ -119,6 +130,7 @@ async function main(environment = process.env) {
       port,
       configHash: config.configHash,
       releaseTag: config.releaseTag,
+      activationArtifactHash: activation.artifactHash,
     }));
   });
 }

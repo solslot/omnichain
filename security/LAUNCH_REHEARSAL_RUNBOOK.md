@@ -78,11 +78,16 @@ account, collection, or approved test vault changes.
 
 ## Service Configuration
 
-Create three root-readable files with mode `0600`:
+Create three service-account-owned regular files with mode `0600`:
 
 - launch-rehearsal service bearer token
 - evidence HMAC secret
 - API service token matching `SOLSLOT_PROTOCOL_ARTIFACT_API_TOKEN`
+
+The sealed rehearsal configuration and omnichain activation evidence must also
+be private regular files readable by the service account. The state directory
+must be owned by that account with mode `0700`. The root-owned systemd
+environment file may remain mode `0600`; it contains paths, not secret values.
 
 The loopback service requires:
 
@@ -117,6 +122,20 @@ by the rehearsal deployment.
 The service binds to loopback. Do not expose port `8794` publicly. Stripe,
 validator, wallet, and faucet secrets remain in their existing server services;
 the coordinator receives none of them.
+
+## Activation Readiness Gate
+
+An activating staging deployment runs
+`scripts/lib/launch-rehearsal-readiness.js` as the service account before it
+enables or starts systemd. The check is read-only: it validates the sealed
+configuration and omnichain activation evidence, verifies all three secret
+files and the state-directory permissions, enforces the loopback listener, and
+performs one authenticated `GET` against the configured candidates API. It
+prints only public hashes, the release tag, API origin, and listener address.
+
+The gate must fail while any post-genesis value is missing. Do not create a
+placeholder vault, collection, activation artifact, release hash, Stripe
+account, or validator roster to make it pass.
 
 ## Failure Handling
 
