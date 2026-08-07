@@ -93,20 +93,28 @@ SOLSLOT_LAUNCH_REHEARSAL_HMAC_FILE=/etc/solslot/secrets/rehearsal-hmac
 SOLSLOT_LAUNCH_REHEARSAL_API_TOKEN_FILE=/etc/solslot/secrets/protocol-artifact-token
 SOLSLOT_LAUNCH_REHEARSAL_STATE_DIR=/var/lib/solslot/rehearsal
 SOLSLOT_LAUNCH_REHEARSAL_HOST=127.0.0.1
-SOLSLOT_LAUNCH_REHEARSAL_PORT=8793
+SOLSLOT_LAUNCH_REHEARSAL_PORT=8794
 ```
 
 The API receives the same public config hash and HMAC secret:
 
 ```text
-SOLSLOT_LAUNCH_REHEARSAL_SERVICE_URL=http://127.0.0.1:8793
+SOLSLOT_LAUNCH_REHEARSAL_SERVICE_URL=http://127.0.0.1:8794
 SOLSLOT_LAUNCH_REHEARSAL_SERVICE_TOKEN=...
 SOLSLOT_LAUNCH_REHEARSAL_CONFIG_HASH=0x...
 SOLSLOT_LAUNCH_REHEARSAL_EVIDENCE_HMAC_SECRET=...
 SOLSLOT_LAUNCH_SETTLEMENT_REHEARSAL_PATH=/var/lib/solslot/api/rehearsal-evidence.json
 ```
 
-The service binds to loopback. Do not expose port `8793` publicly. Stripe,
+The staging deployment environment pins
+`SOLSLOT_REHEARSAL_NODE_BIN=/opt/solslot/runtime/node-v22.23.2/bin/node`,
+`SOLSLOT_REHEARSAL_NODE_VERSION=v22.23.2`, and
+`SOLSLOT_REHEARSAL_PORT=8794`. Deployment stops before changing the systemd
+unit if the Node path is not absolute and executable, its version differs, or
+the port is invalid. Port `8793` is reserved for Key of Solomon and is rejected
+by the rehearsal deployment.
+
+The service binds to loopback. Do not expose port `8794` publicly. Stripe,
 validator, wallet, and faucet secrets remain in their existing server services;
 the coordinator receives none of them.
 
