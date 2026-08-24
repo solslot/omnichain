@@ -31,6 +31,7 @@ contract SolslotAdminRecoveryV3 is EIP712 {
     error ApprovalAlreadyRecorded();
     error ChangeDelayActive();
     error ChangeExpired();
+    error ChangeNotExpired();
     error ChangeNotReady();
     error InvalidBinding();
     error InvalidIntent();
@@ -41,6 +42,7 @@ contract SolslotAdminRecoveryV3 is EIP712 {
 
     uint64 public constant ROUTINE_DELAY_SECONDS = 1 days;
     uint64 public constant LOST_KEY_DELAY_SECONDS = 7 days;
+    uint64 public constant EXECUTION_WINDOW_SECONDS = 7 days;
     address private constant SENTINEL_OWNERS = address(0x1);
     bytes32 private constant LOST_KEY_PREPARE_TYPEHASH =
         keccak256("SolslotLostKeyPrepare(bytes32 intentHash)");
@@ -591,6 +593,18 @@ contract SolslotAdminRecoveryV3 is EIP712 {
         }
     }
 
+    /// @notice Clear a prepared change that can no longer be executed.
+    /// @dev Permissionless because expiry makes the recorded intent unusable;
+    ///      the bounded execution window prevents an unbounded global freeze.
+    function cancelExpired(bytes32 intentHash) external {
+        ActiveChange storage change = _active(intentHash);
+        if (
+            change.phase != ChangePhase.PREPARED
+                || block.timestamp <= change.expiresAt
+        ) revert ChangeNotExpired();
+        _cancel(intentHash, msg.sender);
+    }
+
     function executeEvmKeyChange(bytes32 intentHash) external {
         ActiveChange storage stored = _active(intentHash);
         ActiveChange memory change = stored;
@@ -738,7 +752,11 @@ contract SolslotAdminRecoveryV3 is EIP712 {
     ) private returns (bytes32 intentHash) {
         if (s_activeChange.intentHash != bytes32(0)) revert ActiveChangeExists();
         if (intent.nonce != changeNonce + 1) revert InvalidIntent();
-        if (intent.expiresAt <= block.timestamp + delay) revert InvalidIntent();
+        if (
+            intent.expiresAt <= block.timestamp + delay
+                || intent.expiresAt
+                    > block.timestamp + delay + EXECUTION_WINDOW_SECONDS
+        ) revert InvalidIntent();
         intentHash = hashIntent(intent);
         if (consumedIntent[intentHash]) revert InvalidIntent();
         changeNonce = intent.nonce;
@@ -828,6 +846,15 @@ contract SolslotAdminRecoveryV3 is EIP712 {
             if (
                 intent.identityLauncherIds[slot] != s_identityLauncherIds[slot]
                     || intent.identitySafes[slot] != s_identitySafes[slot]
+            ) revert InvalidIntent();
+            if (
+                expectedKind != ChangeKind.RECOVERY_KIT
+                    && (
+                        intent.newDailyEvmKey
+                            == _currentOwner(s_identitySafes[slot])
+                            || intent.newDailyEvmKey
+                                == s_recoveryGuardians[slot]
+                    )
             ) revert InvalidIntent();
             if (
                 expectedKind == ChangeKind.RECOVERY_KIT
