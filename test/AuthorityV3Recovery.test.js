@@ -138,7 +138,9 @@ async function authorityV3Fixture() {
       evmChainId: chainId,
       sourceManifestHash: SOURCE_MANIFEST_HASH,
       nonce: 1,
-      expiresAt: (await time.latest()) + (30 * DAY),
+      expiresAt: (await time.latest())
+        + (kind === 2 ? WEEK : DAY)
+        + WEEK,
       recoveryKeyRevision: 1,
       ...overrides,
     };
@@ -410,11 +412,52 @@ describe("Authority V3 administrator recovery", function () {
         `0x${"ff".repeat(32)}`,
       ] }),
       await fixture.intent(1, 1, { expiresAt: (await time.latest()) + DAY }),
+      await fixture.intent(1, 1, { expiresAt: (await time.latest()) + (30 * DAY) }),
     ];
     for (const changeIntent of invalid) {
       await expect(fixture.recovery.connect(fixture.daily[1]).prepareRoutine(changeIntent))
         .to.be.revertedWithCustomError(fixture.recovery, "InvalidIntent");
     }
+  });
+
+  it("rejects a replacement daily wallet already assigned to any administrator role", async function () {
+    const fixture = await authorityV3Fixture();
+    const routine = await fixture.intent(1, 1, {
+      newDailyEvmKey: fixture.daily[2].address,
+    });
+    await expect(
+      fixture.recovery.connect(fixture.daily[1]).prepareRoutine(routine),
+    ).to.be.revertedWithCustomError(fixture.recovery, "InvalidIntent");
+
+    const lost = await fixture.intent(0, 2, {
+      newDailyEvmKey: fixture.guardians[2].address,
+    });
+    await expect(
+      fixture.recovery.connect(fixture.guardians[0]).prepareLostKey(lost),
+    ).to.be.revertedWithCustomError(fixture.recovery, "InvalidIntent");
+  });
+
+  it("allows anyone to clear an expired lost-key prepare after one peer goes silent", async function () {
+    const fixture = await authorityV3Fixture();
+    const { intentHash } = await prepareLost(fixture, 0);
+    await executeFromSafe(
+      fixture.identitySafes[1],
+      fixture.recovery.target,
+      fixture.recovery.interface.encodeFunctionData(
+        "cancelLostKeyByPeer",
+        [intentHash],
+      ),
+    );
+
+    await expect(
+      fixture.recovery.connect(fixture.outsider).cancelExpired(intentHash),
+    ).to.be.revertedWithCustomError(fixture.recovery, "ChangeNotExpired");
+    const expiresAt = (await fixture.recovery.activeChange()).expiresAt;
+    await time.setNextBlockTimestamp(expiresAt + 1n);
+    await fixture.recovery.connect(fixture.outsider).cancelExpired(intentHash);
+
+    expect(await fixture.recovery.isChangeActive()).to.equal(false);
+    expect(await fixture.recovery.consumedIntent(intentHash)).to.equal(true);
   });
 
   it("freezes all privileged Safes while a change is pending", async function () {
