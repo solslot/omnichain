@@ -18,11 +18,13 @@ const QUANTITY = 1n;
 const ROUTER_FEE = ethers.parseEther("0.01");
 const WARP_TOLL = ethers.parseEther("0.005");
 
-async function deploySystem(remote) {
+async function deploySystem(remote, alphaToken = false) {
   const [owner, user, payout, outsider] = await ethers.getSigners();
   const router = await ethers.deployContract("MockRouter");
   const portal = await ethers.deployContract("MockWarpPortal");
-  const usdc = await ethers.deployContract("MockUSDC");
+  const usdc = alphaToken
+    ? await ethers.deployContract("SolslotAlphaTestToken", [owner.address])
+    : await ethers.deployContract("MockUSDC");
   const gateway = await ethers.deployContract("SolomonWarpGateway", [
     router.target,
     BASE_SELECTOR,
@@ -47,7 +49,8 @@ async function deploySystem(remote) {
   ]);
 
   await gateway.setTrustedSpoke(spokeSelector, spoke.target);
-  await usdc.mint(user.address, AMOUNT * 10n);
+  if (alphaToken) await usdc.connect(user).claim();
+  else await usdc.mint(user.address, AMOUNT * 10n);
   await usdc.connect(user).approve(spoke.target, AMOUNT * 10n);
   await owner.sendTransaction({ to: gateway.target, value: ethers.parseEther("1") });
 
@@ -117,6 +120,26 @@ async function relayResult(system) {
 }
 
 describe("SolSlot CCIP-to-Warp omnichain flow", function () {
+  for (const succeeded of [true, false]) {
+    it(`settles the alpha test token to ${succeeded ? "payout" : "refund"} without accepting another asset`, async function () {
+      const system = await deploySystem(false, true);
+      const initial = await system.token.balanceOf(system.user.address);
+      const unsupported = await ethers.deployContract("MockUSDC");
+      await unsupported.mint(system.user.address, AMOUNT);
+      await unsupported.connect(system.user).approve(system.spoke.target, AMOUNT);
+      await expect(deposit(system, ethers.id("wrong-test-asset"), unsupported))
+        .to.be.revertedWithCustomError(system.spoke, "InvalidPayment");
+      const id = await deposit(system);
+      expect(await system.token.balanceOf(system.spoke.target)).to.equal(AMOUNT);
+      await relayWarpResult(system, id, succeeded);
+      await system.gateway.forwardResult(id);
+      await system.spoke.settle(id);
+      expect(await system.token.balanceOf(system.spoke.target)).to.equal(0);
+      expect(await system.token.balanceOf(system.payout.address)).to.equal(succeeded ? AMOUNT : 0n);
+      expect(await system.token.balanceOf(system.user.address)).to.equal(succeeded ? initial - AMOUNT : initial);
+      await expect(system.spoke.settle(id)).to.be.reverted;
+    });
+  }
   it("completes a Base-local success without a CCIP hop", async function () {
     const system = await deploySystem(false);
     const globalPaymentId = await deposit(system);
