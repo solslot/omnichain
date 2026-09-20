@@ -1,5 +1,6 @@
 const { ethers } = require("ethers");
 const { readEvidence } = require("./deployment-evidence");
+const { verifyAuthorityNetwork } = require("./authority-network");
 
 const ROSTER_KIND = "solslot-alpha-authority-v3-roster";
 const GOVERNANCE_KIND = "solslot-alpha-authority-v3-governance-deployment";
@@ -197,12 +198,11 @@ async function validateAuthorityV3GovernanceEvidence({
   timelock,
 }) {
   const evidence = readEvidence(path, "authority_v3_governance");
+  await verifyAuthorityNetwork(provider, evidence.network, evidence.chainId);
   if (
     evidence.schemaVersion !== 3
       || evidence.kind !== GOVERNANCE_KIND
       || evidence.authorityRule !== AUTHORITY_RULE
-      || evidence.network !== "baseSepolia"
-      || evidence.chainId !== 84532
       || evidence.safeInfrastructure?.safeVersion !== "1.4.1"
       || evidence.recovery?.routineDelaySeconds !== "86400"
       || evidence.recovery?.lostKeyDelaySeconds !== "604800"

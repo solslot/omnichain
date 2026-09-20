@@ -70,7 +70,19 @@ async function runtimeCodeHash(address) {
   return ethers.keccak256(await ethers.provider.getCode(address));
 }
 
-async function governanceFixture() {
+// The local contracts are exercised through a provider that simulates the
+// selected public RPC chain identity; contract reads still run on Hardhat.
+function authorityProvider(chainId = 84532) {
+  return new Proxy(ethers.provider, {
+    get(target, property) {
+      if (property === "getNetwork") return async () => ({ chainId: BigInt(chainId) });
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+async function governanceFixture(network = "baseSepolia", chainId = 84532) {
   const roster = authorityRoster();
   const [initializer] = await ethers.getSigners();
   const fallbackHandler = await ethers.deployContract("MockOwnable2Step");
@@ -146,8 +158,8 @@ async function governanceFixture() {
     kind: "solslot-alpha-authority-v3-governance-deployment",
     authorityRule: "slot0_and_one_of_slot1_slot2",
     sourceSha: "a".repeat(40),
-    network: "baseSepolia",
-    chainId: 84532,
+    network,
+    chainId,
     rosterArtifactHash: roster.evidence.artifactHash,
     chiaAuthority: {
       network: "testnet11",
@@ -269,11 +281,30 @@ describe("Authority V3 deployment evidence", function () {
     const fixture = await governanceFixture();
     const observed = await validateAuthorityV3GovernanceEvidence({
       path: writeTemporaryEvidence("authority-v3-governance-", fixture.evidence),
-      provider: ethers.provider,
+      provider: authorityProvider(),
       rootSafe: fixture.rootSafe.target,
       timelock: fixture.timelock.target,
     });
     expect(observed.artifactHash).to.equal(fixture.evidence.artifactHash);
+  });
+
+  it("validates Base mainnet governance independently of Chia Testnet11", async function () {
+    const fixture = await governanceFixture("baseMainnet", 8453);
+    const file = writeTemporaryEvidence("authority-v3-base-mainnet-", fixture.evidence);
+    const observed = await validateAuthorityV3GovernanceEvidence({
+      path: file,
+      provider: authorityProvider(8453),
+      rootSafe: fixture.rootSafe.target,
+      timelock: fixture.timelock.target,
+    });
+    expect(observed.chainId).to.equal(8453);
+    expect(observed.chiaAuthority.network).to.equal("testnet11");
+    await expect(validateAuthorityV3GovernanceEvidence({
+      path: file,
+      provider: authorityProvider(84532),
+      rootSafe: fixture.rootSafe.target,
+      timelock: fixture.timelock.target,
+    })).to.be.rejectedWith("RPC chain differs");
   });
 
   it("rejects V2 evidence and altered recovery or topology evidence", async function () {
@@ -283,7 +314,7 @@ describe("Authority V3 deployment evidence", function () {
     v2.schemaVersion = 2;
     await expect(validateAuthorityV3GovernanceEvidence({
       path: writeTemporaryEvidence("authority-v3-v2-", withArtifactHash(v2)),
-      provider: ethers.provider,
+      provider: authorityProvider(),
       rootSafe: fixture.rootSafe.target,
       timelock: fixture.timelock.target,
     })).to.be.rejectedWith("Authority V3 governance evidence is unsupported");
@@ -296,7 +327,7 @@ describe("Authority V3 deployment evidence", function () {
         "authority-v3-altered-",
         withArtifactHash(altered),
       ),
-      provider: ethers.provider,
+      provider: authorityProvider(),
       rootSafe: fixture.rootSafe.target,
       timelock: fixture.timelock.target,
     })).to.be.rejectedWith(
@@ -314,7 +345,7 @@ describe("Authority V3 deployment evidence", function () {
         "authority-v3-bypass-",
         withArtifactHash(bypass),
       ),
-      provider: ethers.provider,
+      provider: authorityProvider(),
       rootSafe: fixture.rootSafe.target,
       timelock: fixture.timelock.target,
     })).to.be.rejectedWith("Authority V3 governance topology evidence mismatches");
@@ -327,7 +358,7 @@ describe("Authority V3 deployment evidence", function () {
         "authority-v3-no-kit-rotation-",
         withArtifactHash(missingKitRotation),
       ),
-      provider: ethers.provider,
+      provider: authorityProvider(),
       rootSafe: fixture.rootSafe.target,
       timelock: fixture.timelock.target,
     })).to.be.rejectedWith("Authority V3 governance evidence is unsupported");
@@ -340,7 +371,7 @@ describe("Authority V3 deployment evidence", function () {
         "authority-v3-unbound-rollback-",
         withArtifactHash(unboundRollback),
       ),
-      provider: ethers.provider,
+      provider: authorityProvider(),
       rootSafe: fixture.rootSafe.target,
       timelock: fixture.timelock.target,
     })).to.be.rejectedWith("Authority V3 governance evidence is unsupported");
