@@ -9,6 +9,7 @@ const {
   readAuthorityV3Roster,
 } = require("./lib/authority-v3-deployment");
 const { safeSaltNonce } = require("./lib/governance-deployment");
+const { authorityRpcUrl, verifyAuthorityNetwork } = require("./lib/authority-network");
 
 const TIMELOCK_DELAY_SECONDS = 86_400n;
 const ROUTINE_DELAY_SECONDS = 86_400n;
@@ -43,10 +44,9 @@ function sameOwners(observed, expected) {
 }
 
 async function main() {
-  if (network.name !== "baseSepolia") {
-    throw new Error("Authority V3 governance may only deploy on Base Sepolia");
-  }
   const config = currentNetworkConfig();
+  const providerUrl = authorityRpcUrl(network.name, config.chainId, process.env);
+  await verifyAuthorityNetwork(ethers.provider, network.name, config.chainId);
   await assertChain(config);
   const sourceSha = requiredSourceSha();
   const authority = readAuthorityV3Roster(
@@ -59,7 +59,7 @@ async function main() {
   const protocol = await import("@safe-global/protocol-kit");
   const Safe = protocol.default;
   const safeProvider = new protocol.SafeProvider({
-    provider: process.env.BASE_SEPOLIA_RPC_URL,
+    provider: providerUrl,
     signer: process.env.DEPLOYER_PRIVATE_KEY,
   });
   const [fallbackContract, signMessageContract] = await Promise.all([
@@ -126,7 +126,7 @@ async function main() {
 
   async function deploySafe(label, owners, threshold, extraConfig) {
     const protocolKit = await Safe.init({
-      provider: process.env.BASE_SEPOLIA_RPC_URL,
+      provider: providerUrl,
       signer: process.env.DEPLOYER_PRIVATE_KEY,
       predictedSafe: {
         safeAccountConfig: {
