@@ -39,8 +39,9 @@ function record() {
 }
 
 function settings(evidence) {
+  const base = evidence.baseMainnet || evidence.baseSepolia;
   return {
-    warpPortal: evidence.baseSepolia.warpPortalAddress,
+    warpPortal: base.warpPortalAddress,
     warpChiaChain: "0x786368",
     samuelBridgingPuzzle: evidence.testnet11.bridgingPuzzleHash,
     samuelReturnPuzzle: evidence.testnet11.returnPuzzleHash,
@@ -49,11 +50,60 @@ function settings(evidence) {
     voucherBurnInner: evidence.testnet11.voucherBurnInnerHash,
     protocolSourceSha: evidence.protocolSourceSha,
     samuelSourceSha: evidence.sourceSha,
-    predictedGatewayAddress: evidence.baseSepolia.solomonGatewayAddress,
+    predictedGatewayAddress: base.solomonGatewayAddress,
   };
 }
 
 describe("Samuel testnet coordinate evidence", function () {
+  function mainnetRecord(overrides = {}) {
+    const { artifactHash, baseSepolia, ...body } = record();
+    return withArtifactHash({ ...body, schemaVersion: 4, paymentChainId: 8453,
+      testOnly: true, validatorIdentityDomain: "solslot-alpha-native-bridge-testnet11-base-mainnet",
+      baseMainnet: { ...baseSepolia, chainId: 8453 }, ...overrides });
+  }
+
+  function candidate(evidence) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "samuel-base-candidate-"));
+    const file = path.join(directory, "coordinates.json");
+    writeEvidence(file, evidence);
+    return file;
+  }
+
+  it("accepts Base mainnet only with explicit matching test evidence", function () {
+    const evidence = mainnetRecord();
+    const file = candidate(evidence);
+    expect(validateSamuelCoordinates(file, settings(evidence), 8453).artifactHash).to.equal(evidence.artifactHash);
+    expect(() => validateSamuelCoordinates(file, settings(evidence))).to.throw("selected payment chain");
+    expect(() => validateSamuelCoordinates(file, settings(evidence), 84532)).to.throw("selected payment chain");
+  });
+
+  it("rejects a Sepolia artifact when the RPC configuration selects Base mainnet", function () {
+    const evidence = record();
+    expect(() => validateSamuelCoordinates(candidate(evidence), settings(evidence), 8453)).to.throw("selected payment chain");
+  });
+
+  it("rejects wrong domains, mixed projections, or a real-value label", function () {
+    for (const overrides of [
+      { testOnly: false }, { paymentChainId: 84532 },
+      { validatorIdentityDomain: "solslot-alpha-warp-testnet11-base-sepolia" },
+      { baseSepolia: record().baseSepolia },
+      { baseMainnet: { ...record().baseSepolia, chainId: 84532 } },
+    ]) {
+      const evidence = mainnetRecord(overrides);
+      expect(() => validateSamuelCoordinates(candidate(evidence), settings(evidence), 8453)).to.throw("selected payment chain");
+    }
+  });
+
+  it("retains exact source and gateway checks on Base mainnet", function () {
+    const evidence = mainnetRecord();
+    const file = candidate(evidence);
+    for (const overrides of [{ samuelSourceSha: "f".repeat(40) },
+      { protocolSourceSha: "f".repeat(40) },
+      { predictedGatewayAddress: `0x${"99".repeat(20)}` }]) {
+      expect(() => validateSamuelCoordinates(file, { ...settings(evidence), ...overrides }, 8453)).to.throw("does not match");
+    }
+  });
+
   it("binds one 2-of-3 Testnet11 roster to the Base Sepolia portal", function () {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "samuel-coordinates-"));
     const file = path.join(directory, "coordinates.json");

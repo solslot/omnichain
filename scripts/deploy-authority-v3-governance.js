@@ -51,6 +51,7 @@ async function main() {
   const sourceSha = requiredSourceSha();
   const authority = readAuthorityV3Roster(
     process.env.SOLSLOT_AUTHORITY_V3_ROSTER_PATH,
+    config.chainId,
   );
   const [deployer] = await ethers.getSigners();
   if (!deployer) throw new Error("DEPLOYER_PRIVATE_KEY is required");

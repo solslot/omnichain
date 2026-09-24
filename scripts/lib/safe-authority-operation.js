@@ -73,6 +73,15 @@ function recoverSafeMessageSigner(typedData, signature) {
   ));
 }
 
+function approvalTypedData(chainId, approval, transactionData) {
+  let message = transactionData;
+  if (approval.parentSafe) {
+    const parent = safeMessageTypedData(chainId, approval.parentSafe, transactionData);
+    message = ethers.TypedDataEncoder.encode(parent.domain, parent.types, parent.message);
+  }
+  return safeMessageTypedData(chainId, approval.safe, message);
+}
+
 function validateAuthorityApprovalEvidence(packageEvidence, approvalEvidence) {
   const expectedApprovals = packageEvidence?.authorityOperation?.approvals;
   if (
@@ -93,11 +102,8 @@ function validateAuthorityApprovalEvidence(packageEvidence, approvalEvidence) {
     if (!supplied || typeof supplied.signature !== "string") {
       throw new Error(`Missing ${approval.role} administrator signature`);
     }
-    const typedData = safeMessageTypedData(
-      packageEvidence.chainId,
-      approval.safe,
-      packageEvidence.authorityOperation.transactionData,
-    );
+    const typedData = approvalTypedData(packageEvidence.chainId, approval,
+      packageEvidence.authorityOperation.transactionData);
     const messageHash = ethers.TypedDataEncoder.hash(
       typedData.domain,
       typedData.types,
@@ -114,6 +120,7 @@ function validateAuthorityApprovalEvidence(packageEvidence, approvalEvidence) {
       role: approval.role,
       signer,
       safe: approval.safe,
+      ...(approval.parentSafe ? { parentSafe: approval.parentSafe } : {}),
       signature: supplied.signature,
     };
   });
@@ -126,7 +133,7 @@ function normalizeSignature(signature) {
   return ethers.Signature.from(signature).serialized;
 }
 
-function encodeContractSignatures(entries) {
+function encodeContractSignatures(entries, nested = false) {
   if (!Array.isArray(entries) || entries.length === 0) {
     throw new Error("At least one contract signature is required");
   }
@@ -134,7 +141,7 @@ function encodeContractSignatures(entries) {
     if (!ethers.isAddress(owner)) throw new Error("Contract signature owner is invalid");
     return {
       owner: ethers.getAddress(owner),
-      signature: normalizeSignature(signature),
+      signature: nested ? checkedContractSignature(signature) : normalizeSignature(signature),
     };
   }).sort((left, right) => (
     BigInt(left.owner.toLowerCase()) < BigInt(right.owner.toLowerCase()) ? -1 : 1
@@ -166,6 +173,19 @@ function encodeContractSignatures(entries) {
   return ethers.hexlify(ethers.concat([...staticParts, ...dynamicParts]));
 }
 
+function checkedContractSignature(signature) {
+  if (!ethers.isHexString(signature) || ethers.getBytes(signature).length < 65 ||
+      ethers.getBytes(signature).length > 4096) throw new Error('Nested contract signature is invalid');
+  return signature;
+}
+
+function encodeAuthoritySignatures(approvals) {
+  return encodeContractSignatures(approvals.map(({ safe, parentSafe, signature }) => ({
+    owner: parentSafe || safe,
+    signature: parentSafe ? encodeContractSignatures([{ owner: safe, signature }]) : normalizeSignature(signature),
+  })), true);
+}
+
 async function buildSafeAuthorityOperation({
   provider,
   chainId,
@@ -174,11 +194,12 @@ async function buildSafeAuthorityOperation({
   rootTransaction,
   ownerIdentitySafe,
   coadminSafe,
+  coadminIdentitySafe,
 }) {
   if (!["schedule", "execute"].includes(phase)) {
     throw new Error("Safe authority phase must be schedule or execute");
   }
-  for (const entry of [ownerIdentitySafe, coadminSafe]) {
+  for (const entry of [ownerIdentitySafe, coadminSafe, ...(coadminIdentitySafe ? [coadminIdentitySafe] : [])]) {
     if (
       !ethers.isAddress(entry?.address) ||
       !Array.isArray(entry?.owners) ||
@@ -207,11 +228,12 @@ async function buildSafeAuthorityOperation({
     },
     {
       role: "coadmin",
-      safe: ethers.getAddress(coadminSafe.address),
-      allowedSigners: coadminSafe.owners.map(ethers.getAddress),
+      safe: ethers.getAddress(coadminIdentitySafe?.address || coadminSafe.address),
+      ...(coadminIdentitySafe ? { parentSafe: ethers.getAddress(coadminSafe.address) } : {}),
+      allowedSigners: (coadminIdentitySafe || coadminSafe).owners.map(ethers.getAddress),
     },
   ].map((approval) => {
-    const typedData = safeMessageTypedData(chainId, approval.safe, transactionData);
+    const typedData = approvalTypedData(chainId, approval, transactionData);
     return {
       ...approval,
       messageHash: ethers.TypedDataEncoder.hash(
@@ -233,6 +255,8 @@ async function buildSafeAuthorityOperation({
 }
 
 module.exports = {
+  approvalTypedData,
+  encodeAuthoritySignatures,
   buildSafeAuthorityOperation,
   encodeContractSignatures,
   recoverSafeMessageSigner,

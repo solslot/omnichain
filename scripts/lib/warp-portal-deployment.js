@@ -29,6 +29,44 @@ const IMPLEMENTATION_SLOT =
   "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
 
+function portalNetworkProfile(chainId = 84532) {
+  if (chainId === 84532) return {
+    schemaVersion: 1,
+    kind: PORTAL_KIND,
+    network: "baseSepolia",
+    chainId,
+    identityDomain: ROSTER_DOMAIN,
+    rpcVariable: "BASE_SEPOLIA_RPC_URL",
+  };
+  if (chainId === 8453) return {
+    schemaVersion: 2,
+    kind: "solslot-native-bridge-base-mainnet-portal-deployment",
+    network: "baseMainnet",
+    chainId,
+    identityDomain: "solslot-alpha-native-bridge-testnet11-base-mainnet",
+    rpcVariable: "BASE_MAINNET_RPC_URL",
+  };
+  throw new Error("Unsupported bridge portal payment chain");
+}
+
+function portalDeploymentSettings(environment, networkName, chainId) {
+  const profile = portalNetworkProfile(chainId);
+  if (networkName !== profile.network || environment.SOLSLOT_WARP_TESTNET_DEPLOYMENT !== "true") {
+    throw new Error("Portal deployment requires the selected Base network and explicit test deployment");
+  }
+  if (chainId === 8453 && (
+    environment.SOLSLOT_CHIA_NETWORK !== "testnet11" ||
+    environment.SOLSLOT_BRIDGE_TEST_ONLY !== "true"
+  )) {
+    throw new Error("Base mainnet bridge deployment requires explicit Testnet11 and test-only assets");
+  }
+  const rpcUrl = environment[profile.rpcVariable];
+  if (typeof rpcUrl !== "string" || !rpcUrl.trim()) {
+    throw new Error(`${profile.rpcVariable} is required for the selected portal network`);
+  }
+  return { ...profile, rpcUrl };
+}
+
 function fileSha256(file, expected, label) {
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > MAX_ARTIFACT_BYTES) {
@@ -151,13 +189,14 @@ function readPinnedWarpArtifacts(sourceRoot) {
   };
 }
 
-function readWarpValidatorRoster(rosterPath, expectedArtifactHash) {
+function readWarpValidatorRoster(rosterPath, expectedArtifactHash, expectedChainId = 84532) {
+  const profile = portalNetworkProfile(expectedChainId);
   const roster = readEvidence(rosterPath, "warp_validator_roster");
   const validators = roster.validators;
   if (
     roster.schemaVersion !== 2 ||
     roster.kind !== ROSTER_KIND ||
-    roster.domain !== ROSTER_DOMAIN ||
+    roster.domain !== profile.identityDomain ||
     roster.threshold !== 2 ||
     !Array.isArray(validators) ||
     validators.length !== 3 ||
@@ -171,7 +210,7 @@ function readWarpValidatorRoster(rosterPath, expectedArtifactHash) {
       validator.schemaVersion !== 2 ||
       validator.kind !== "solslot-samuel-validator-public-identity" ||
       validator.validatorId !== `validator-${index + 1}` ||
-      validator.domain !== ROSTER_DOMAIN ||
+      validator.domain !== profile.identityDomain ||
       !ethers.isHexString(validator.blsPublicKey, 48) ||
       !ethers.isAddress(validator.evmAddress)
     ) {
@@ -181,6 +220,9 @@ function readWarpValidatorRoster(rosterPath, expectedArtifactHash) {
   });
   if (new Set(addresses.map((address) => address.toLowerCase())).size !== 3) {
     throw new Error("Warp validator EVM addresses must be unique");
+  }
+  if (new Set(validators.map((validator) => validator.blsPublicKey.toLowerCase())).size !== 3) {
+    throw new Error("Warp validator BLS keys must be unique");
   }
   return { roster, addresses };
 }
@@ -233,15 +275,22 @@ async function validateWarpPortalEvidence({
   expectedOmnichainSourceSha,
   expectedRosterArtifactHash,
   expectedValidatorAddresses,
+  expectedChainId = 84532,
   minimumConfirmations = 12,
 }) {
+  const profile = portalNetworkProfile(expectedChainId);
   const evidence = readEvidence(evidencePath, "warp_portal");
   if (
-    evidence.schemaVersion !== 1 ||
-    evidence.kind !== PORTAL_KIND ||
+    evidence.schemaVersion !== profile.schemaVersion ||
+    evidence.kind !== profile.kind ||
     evidence.sourceSha !== expectedOmnichainSourceSha ||
-    evidence.network !== "baseSepolia" ||
-    evidence.chainId !== 84532 ||
+    evidence.network !== profile.network ||
+    evidence.chainId !== expectedChainId ||
+    (expectedChainId === 8453 && (
+      evidence.chiaNetwork !== "testnet11" ||
+      evidence.testOnly !== true ||
+      evidence.validatorIdentityDomain !== profile.identityDomain
+    )) ||
     evidence.confirmations < minimumConfirmations ||
     evidence.warpSource?.commit !== WARP_SOURCE_SHA ||
     evidence.warpSource?.tree !== WARP_SOURCE_TREE ||
@@ -263,6 +312,10 @@ async function validateWarpPortalEvidence({
     evidence.portal?.supportedChains?.join(",") !== PORTAL_CHAIN
   ) {
     throw new Error("Warp portal deployment evidence is unsupported");
+  }
+  const observedChain = await provider.getNetwork();
+  if (observedChain.chainId !== BigInt(expectedChainId)) {
+    throw new Error("Warp portal RPC chain differs from the selected payment chain");
   }
   const portalAddress = ethers.getAddress(evidence.portal.address);
   const implementationAddress = ethers.getAddress(evidence.proxy.implementation);
@@ -384,6 +437,8 @@ module.exports = {
   WARP_PROXY_ARTIFACT_SHA256,
   WARP_SOURCE_SHA,
   WARP_SOURCE_TREE,
+  portalNetworkProfile,
+  portalDeploymentSettings,
   readPinnedWarpArtifacts,
   readWarpValidatorRoster,
   validateWarpPortalEvidence,

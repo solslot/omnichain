@@ -9,7 +9,7 @@ const {
   withArtifactHash,
   writeEvidence,
 } = require("./lib/deployment-evidence");
-const { validateGovernanceEvidence } = require("./lib/governance-deployment");
+const { validatePaymentGovernance } = require("./lib/payment-governance");
 
 async function runtimeCodeHash(address, label) {
   const code = await ethers.provider.getCode(address);
@@ -47,7 +47,7 @@ async function main() {
   sameAddress(governance, deploymentConfig.governanceTimelock, "GOVERNANCE_ADDRESS");
   const rootSafe = requiredAddress("ROOT_SAFE_ADDRESS", deploymentConfig.governanceRootSafe);
   sameAddress(rootSafe, deploymentConfig.governanceRootSafe, "ROOT_SAFE_ADDRESS");
-  const governanceEvidence = await validateGovernanceEvidence({
+  const governanceEvidence = await validatePaymentGovernance({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
     rootSafe,

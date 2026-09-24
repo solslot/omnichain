@@ -39,10 +39,10 @@ function normalizedBytes32(value, label) {
   return normalized;
 }
 
-function readAuthorityV3Roster(path) {
+function readAuthorityV3Roster(path, expectedChainId = 84532) {
   const roster = readEvidence(path, "authority_v3_roster");
   if (
-    roster.schemaVersion !== 2
+    ![2, 3].includes(roster.schemaVersion)
       || roster.kind !== ROSTER_KIND
       || roster.authorityRule !== AUTHORITY_RULE
       || roster.network !== "testnet11"
@@ -53,6 +53,20 @@ function readAuthorityV3Roster(path) {
       || roster.identityLauncherIds.length !== 3
   ) {
     throw new Error("Authority V3 roster evidence is unsupported");
+  }
+  if (!Number.isSafeInteger(expectedChainId) || ![8453, 84532].includes(expectedChainId)) {
+    throw new Error("Authority V3 deployment chain is unsupported");
+  }
+  const authorityChainId = roster.schemaVersion === 3 ? roster.paymentChainId : 84532;
+  if (roster.schemaVersion === 2 &&
+      (Object.hasOwn(roster, "paymentChainId") || Object.hasOwn(roster, "evmChainId"))) {
+    throw new Error("Legacy Authority V3 roster cannot select another network");
+  }
+  if (authorityChainId !== expectedChainId ||
+      (roster.schemaVersion === 3 &&
+       (!Number.isSafeInteger(roster.evmChainId) ||
+        ![11155111, 84532, 8453].includes(roster.evmChainId)))) {
+    throw new Error("Authority V3 roster differs from the selected deployment chain");
   }
   const sourceManifestHash = normalizedBytes32(
     roster.sourceManifestHash,
@@ -129,6 +143,7 @@ function readAuthorityV3Roster(path) {
   }
   return {
     roster,
+    authorityChainId,
     sourceManifestHash,
     authorityLauncherId,
     identityLauncherIds,

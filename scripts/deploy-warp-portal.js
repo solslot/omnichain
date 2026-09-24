@@ -20,6 +20,7 @@ const {
   WARP_PROXY_ARTIFACT_SHA256,
   WARP_SOURCE_SHA,
   WARP_SOURCE_TREE,
+  portalDeploymentSettings,
   readPinnedWarpArtifacts,
   readWarpValidatorRoster,
 } = require("./lib/warp-portal-deployment");
@@ -66,20 +67,13 @@ function sameAddresses(left, right) {
 }
 
 async function main() {
-  if (
-    network.name !== "baseSepolia" ||
-    process.env.SOLSLOT_WARP_TESTNET_DEPLOYMENT !== "true"
-  ) {
-    throw new Error(
-      "Warp portal deployment requires Base Sepolia and SOLSLOT_WARP_TESTNET_DEPLOYMENT=true",
-    );
-  }
+  const config = currentNetworkConfig();
+  const portalSettings = portalDeploymentSettings(process.env, network.name, config.chainId);
   const sourceSha = requiredSourceSha();
   const output = requireNewEvidencePath(
     process.env.SOLSLOT_WARP_PORTAL_DEPLOYMENT_OUTPUT,
     "SOLSLOT_WARP_PORTAL_DEPLOYMENT_OUTPUT",
   );
-  const config = currentNetworkConfig();
   await assertChain(config);
   const confirmations = Number(requiredUint(
     process.env,
@@ -96,6 +90,7 @@ async function main() {
   const { roster, addresses: validatorAddresses } = readWarpValidatorRoster(
     process.env.SOLSLOT_WARP_VALIDATOR_ROSTER_PATH,
     expectedRosterHash,
+    config.chainId,
   );
   const artifacts = readPinnedWarpArtifacts(process.env.SOLSLOT_WARP_SOURCE_ROOT);
   const [deployer] = await ethers.getSigners();
@@ -114,7 +109,7 @@ async function main() {
   const protocol = await import("@safe-global/protocol-kit");
   const Safe = protocol.default;
   const protocolKit = await Safe.init({
-    provider: process.env.BASE_SEPOLIA_RPC_URL,
+    provider: portalSettings.rpcUrl,
     signer: process.env.DEPLOYER_PRIVATE_KEY,
     predictedSafe: {
       safeAccountConfig: {
@@ -234,11 +229,16 @@ async function main() {
   }
 
   const evidence = withArtifactHash({
-    schemaVersion: 1,
-    kind: "solslot-warp-base-sepolia-portal-deployment",
+    schemaVersion: portalSettings.schemaVersion,
+    kind: portalSettings.kind,
     sourceSha,
     network: network.name,
     chainId: config.chainId,
+    ...(config.chainId === 8453 ? {
+      chiaNetwork: "testnet11",
+      testOnly: true,
+      validatorIdentityDomain: portalSettings.identityDomain,
+    } : {}),
     confirmations,
     validatorRosterArtifactHash: roster.artifactHash,
     warpSource: {

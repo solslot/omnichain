@@ -17,6 +17,17 @@ function isTestnet(networkName) {
   return TESTNETS.has(networkName);
 }
 
+function requireTestAssetScope(environment, networkName) {
+  if (environment.SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT !== 'true') {
+    throw new Error('explicit SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true is required');
+  }
+  if (isTestnet(networkName)) return;
+  if (networkName !== 'baseMainnet' || environment.SOLSLOT_CHIA_NETWORK !== 'testnet11' ||
+      environment.SOLSLOT_BRIDGE_TEST_ONLY !== 'true') {
+    throw new Error('Base mainnet payment preparation requires explicit Testnet11 test-asset scope');
+  }
+}
+
 function requiredAddress(environment, name, fallback) {
   const value = environment[name] || fallback;
   if (!value || !ethers.isAddress(value) || ethers.getAddress(value) === ethers.ZeroAddress) {
@@ -53,8 +64,15 @@ function defaultHubName(config, networkName) {
 }
 
 function deploymentSettings(environment, config, networkName, networks) {
+  if (networkName === 'baseMainnet') requireTestAssetScope(environment, networkName);
   const payout = requiredAddress(environment, "PAYOUT_ADDRESS");
-  const usdc = requiredAddress(environment, "USDC_ADDRESS", config.stablecoins?.usdc);
+  // Never silently fall back to real issuer USDC when preparing the alpha.
+  const usdc = requiredAddress(environment, "USDC_ADDRESS", networkName === 'baseMainnet' ? undefined : config.stablecoins?.usdc);
+  const testAssetEvidencePath = networkName === 'baseMainnet'
+    ? environment.SOLSLOT_TEST_ASSET_EVIDENCE_PATH : undefined;
+  if (networkName === 'baseMainnet' && !testAssetEvidencePath) {
+    throw new Error('SOLSLOT_TEST_ASSET_EVIDENCE_PATH is required for Base test payments');
+  }
   const governance = requiredAddress(environment, "GOVERNANCE_ADDRESS");
   const rootSafe = requiredAddress(environment, "ROOT_SAFE_ADDRESS");
   if (payout !== rootSafe) throw new Error("PAYOUT_ADDRESS must equal ROOT_SAFE_ADDRESS for testnet alpha");
@@ -113,6 +131,7 @@ function deploymentSettings(environment, config, networkName, networks) {
     }
     : null;
   return {
+    testAssetEvidencePath,
     payout,
     usdc,
     governance,
@@ -161,6 +180,15 @@ async function inspectDeploymentReadiness({
   if (usdcDecimals !== 6) {
     throw new Error("USDC must report exactly six decimals");
   }
+  let testAssetArtifactHash;
+  if (config.chainId === 8453) {
+    const { validateTestAssetEvidence } = require('./test-asset-evidence');
+    const evidence = await validateTestAssetEvidence({
+      provider, path: settings.testAssetEvidencePath, expectedToken: settings.usdc,
+      minimumConfirmations: settings.confirmations,
+    });
+    testAssetArtifactHash = evidence.artifactHash;
+  }
   const additional = settings.deployGateway
     ? [await runtimeCode(provider, settings.gatewaySettings.warpPortal, "Warp portal")]
     : [await runtimeCode(provider, settings.gateway, "hub gateway")];
@@ -179,6 +207,7 @@ async function inspectDeploymentReadiness({
     ? ethers.getCreateAddress({ from: deployerAddress, nonce: deployerNonce })
     : null;
   return {
+    ...(testAssetArtifactHash ? { testAssetArtifactHash } : {}),
     chainId: Number(network.chainId),
     deployer: deployerAddress,
     deployerBalanceWei: deployerBalanceWei.toString(),
@@ -225,6 +254,10 @@ function validatePreflightEvidence({
     throw new Error("SOLSLOT_OMNICHAIN_PREFLIGHT_MAX_AGE_SECONDS must be between 60 and 86400");
   }
   const preflight = readEvidence(evidencePath, "preflight");
+  if (config.chainId === 8453 && (!inspection.testAssetArtifactHash ||
+      preflight.inspection?.testAssetArtifactHash !== inspection.testAssetArtifactHash)) {
+    throw new Error('preflight test-asset evidence changed or is missing');
+  }
   if (
     preflight.schemaVersion !== 5 ||
     preflight.kind !== "solslot-omnichain-testnet-deployment-preflight" ||
@@ -319,6 +352,7 @@ function validatePreflightEvidence({
 }
 
 module.exports = {
+  requireTestAssetScope,
   deploymentSettings,
   inspectDeploymentReadiness,
   isTestnet,

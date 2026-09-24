@@ -3,12 +3,26 @@ const { readEvidence } = require("./deployment-evidence");
 
 const BLS_KEY = /^0x[0-9a-f]{96}$/;
 
-function validateSamuelCoordinates(path, gatewaySettings) {
+function selectedSamuelBase(evidence, expectedChainId = 84532) {
+  if (expectedChainId === 84532 && evidence.schemaVersion === 3 &&
+      !Object.hasOwn(evidence, "baseMainnet") &&
+      !Object.hasOwn(evidence, "paymentChainId")) {
+    if (evidence.baseSepolia?.chainId === 84532) return evidence.baseSepolia;
+  }
+  if (expectedChainId === 8453 && evidence.schemaVersion === 4 &&
+      evidence.paymentChainId === 8453 && evidence.testOnly === true &&
+      evidence.validatorIdentityDomain === "solslot-alpha-native-bridge-testnet11-base-mainnet" &&
+      !Object.hasOwn(evidence, "baseSepolia")) {
+    if (evidence.baseMainnet?.chainId === 8453) return evidence.baseMainnet;
+  }
+  throw new Error("Samuel coordinate evidence is unsupported for the selected payment chain");
+}
+
+function validateSamuelCoordinates(path, gatewaySettings, expectedChainId = 84532) {
   const evidence = readEvidence(path, "samuel_coordinates");
   const chia = evidence.testnet11;
-  const base = evidence.baseSepolia;
+  const base = selectedSamuelBase(evidence, expectedChainId);
   if (
-    evidence.schemaVersion !== 3 ||
     evidence.kind !== "solslot-samuel-testnet-coordinates" ||
     evidence.threshold !== 2 ||
     !/^[0-9a-f]{40}$/.test(String(evidence.sourceSha || "")) ||
@@ -26,7 +40,6 @@ function validateSamuelCoordinates(path, gatewaySettings) {
         ethers.getAddress(address).toLowerCase()
       )
     ).size !== 3 ||
-    base?.chainId !== 84532 ||
     !ethers.isAddress(base?.warpPortalAddress) ||
     !ethers.isAddress(base?.solomonGatewayAddress) ||
     !ethers.isHexString(chia?.portalLauncherId, 32) ||
@@ -59,4 +72,4 @@ function validateSamuelCoordinates(path, gatewaySettings) {
   return evidence;
 }
 
-module.exports = { validateSamuelCoordinates };
+module.exports = { validateSamuelCoordinates, selectedSamuelBase };

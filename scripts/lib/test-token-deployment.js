@@ -7,11 +7,20 @@ const { sha256, stableJson } = require("./deployment-evidence");
 
 const CONTRACT = "SolslotAlphaTestToken";
 const SCHEMA = "solslot.alpha-test-token-deployment.v1";
+const FIXTURE_CONTRACT = "SolslotTestToken";
+const FIXTURE_SCHEMA = "solslot.payment-test-asset-deployment.v1";
 const ORACLE = "0x420000000000000000000000000000000000000F";
 const ORACLE_ABI = ["function getL1FeeUpperBound(uint256) view returns (uint256)"];
 const TOKEN = Object.freeze({name: "Solslot Alpha Test Token", symbol: "TEST-SOLS", decimals: 6,
   initialSupply: "10000000000000", faucetAmount: "1000000000000", cooldownSeconds: 86400,
   hasMonetaryValue: false, assetNetwork: "testnet11"});
+function fixtureToken(usdt) {
+  return {name: usdt ? "Solslot Test USDT" : "Solslot Test USDC", symbol: usdt ? "TEST-USDT" : "TEST-USDC",
+    decimals: 6, initialSupply: "0", faucetAmount: "10000000000", cooldownSeconds: 3600,
+    hasMonetaryValue: false, assetNetwork: "testnet11"};
+}
+function contractFor(plan) { return plan.schema === FIXTURE_SCHEMA ? FIXTURE_CONTRACT : CONTRACT; }
+function constructorArgs(plan) { return plan.schema === FIXTURE_SCHEMA ? [plan.token.symbol === "TEST-USDT"] : [plan.initialRecipient]; }
 const FIELDS = ["schema", "network", "chainId", "sourceSha", "actionEnvelopeId", "deployer",
   "initialRecipient", "tokenAddress", "token", "nonce", "initCodeHash", "runtimeCodeHash",
   "gasLimit", "maxFeePerGas", "maxPriorityFeePerGas", "l1FeeBudgetWei", "planHash"];
@@ -29,13 +38,14 @@ function validatePlan(plan) {
   exact(plan, FIELDS, "plan");
   const {planHash, ...body} = plan;
   check(planHash === sha256(body), "plan hash differs");
-  check(plan.schema === SCHEMA && plan.network === "baseMainnet" && plan.chainId === 8453,
+  check([SCHEMA, FIXTURE_SCHEMA].includes(plan.schema) && plan.network === "baseMainnet" && plan.chainId === 8453,
     "test token requires explicit Base mainnet/8453");
   check(typeof plan.sourceSha === "string" && /^[0-9a-f]{40}$/.test(plan.sourceSha) && plan.sourceSha !== "0".repeat(40), "source SHA required");
   check(typeof plan.actionEnvelopeId === "string" && /^AE-SOLSLOT-[A-Z0-9-]{1,128}$/.test(plan.actionEnvelopeId), "ActionEnvelope required");
   for (const k of ["deployer", "initialRecipient", "tokenAddress"]) hex(plan[k], 20, k);
   for (const k of ["initCodeHash", "runtimeCodeHash"]) hex(plan[k], 32, k);
-  check(stableJson(plan.token) === stableJson(TOKEN), "test token identity differs");
+  const expectedToken = plan.schema === FIXTURE_SCHEMA ? fixtureToken(plan.token?.symbol === "TEST-USDT") : TOKEN;
+  check(stableJson(plan.token) === stableJson(expectedToken), "test token identity differs");
   check(Number.isSafeInteger(plan.nonce) && plan.nonce >= 0, "invalid nonce");
   check(plan.tokenAddress === ethers.getCreateAddress({from: plan.deployer, nonce: plan.nonce}).toLowerCase(), "CREATE address differs");
   check(plan.initialRecipient === plan.deployer, "initial test supply must go to the deploying operator");
@@ -46,9 +56,9 @@ function validatePlan(plan) {
 }
 function requestFor(plan, artifact) {
   validatePlan(plan);
-  check(artifact.contractName === CONTRACT, "wrong compiled contract");
+  check(artifact.contractName === contractFor(plan), "wrong compiled contract");
   const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode);
-  const data = ethers.concat([factory.bytecode, factory.interface.encodeDeploy([plan.initialRecipient])]);
+  const data = ethers.concat([factory.bytecode, factory.interface.encodeDeploy(constructorArgs(plan))]);
   check(ethers.keccak256(data) === plan.initCodeHash, "compiled init code differs");
   check(ethers.keccak256(artifact.deployedBytecode) === plan.runtimeCodeHash, "compiled runtime differs");
   return {type: 2, chainId: 8453n, nonce: plan.nonce, to: null, value: 0n, data,
@@ -61,6 +71,19 @@ function preparePlan(input, artifact) {
   const data = ethers.concat([factory.bytecode, factory.interface.encodeDeploy([deployer])]);
   const plan = seal({...input, schema: SCHEMA, network: "baseMainnet", chainId: 8453,
     deployer, initialRecipient: deployer, token: TOKEN,
+    tokenAddress: ethers.getCreateAddress({from: deployer, nonce: input.nonce}).toLowerCase(),
+    initCodeHash: ethers.keccak256(data), runtimeCodeHash: ethers.keccak256(artifact.deployedBytecode)});
+  requestFor(plan, artifact);
+  return plan;
+}
+function prepareFixturePlan(input, artifact, fixture) {
+  check(["TEST-USDC", "TEST-USDT"].includes(fixture), "unknown payment test fixture");
+  check(artifact.contractName === FIXTURE_CONTRACT, "wrong compiled contract");
+  const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode);
+  const deployer = ethers.getAddress(input.deployer).toLowerCase();
+  const data = ethers.concat([factory.bytecode, factory.interface.encodeDeploy([fixture === "TEST-USDT"])]);
+  const plan = seal({...input, schema: FIXTURE_SCHEMA, network: "baseMainnet", chainId: 8453,
+    deployer, initialRecipient: deployer, token: fixtureToken(fixture === "TEST-USDT"),
     tokenAddress: ethers.getCreateAddress({from: deployer, nonce: input.nonce}).toLowerCase(),
     initCodeHash: ethers.keccak256(data), runtimeCodeHash: ethers.keccak256(artifact.deployedBytecode)});
   requestFor(plan, artifact);
@@ -216,5 +239,5 @@ async function runDeployment({plan, artifact, providers, signerFactory, journalD
   check(sent.hash === hash, "broadcast returned a different transaction hash");
   return {status: "broadcast", transactionHash: hash, tokenAddress: plan.tokenAddress, planHash: plan.planHash};
 }
-module.exports = {CONTRACT, TOKEN, seal, validatePlan, preparePlan, requestFor, readCanonical,
+module.exports = {CONTRACT, TOKEN, FIXTURE_CONTRACT, FIXTURE_SCHEMA, contractFor, fixtureToken, prepareFixturePlan, seal, validatePlan, preparePlan, requestFor, readCanonical,
   writeOnce, boundary, l1UpperBound, inspectFresh, signedHash, runDeployment};

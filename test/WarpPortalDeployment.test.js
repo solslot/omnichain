@@ -17,6 +17,8 @@ const {
   WARP_PROXY_ARTIFACT_SHA256,
   WARP_SOURCE_SHA,
   WARP_SOURCE_TREE,
+  portalNetworkProfile,
+  portalDeploymentSettings,
   readWarpValidatorRoster,
   validateWarpPortalEvidence,
 } = require("../scripts/lib/warp-portal-deployment");
@@ -28,17 +30,18 @@ function temporaryEvidence(prefix, record) {
   return file;
 }
 
-function validatorRoster(addresses) {
+function validatorRoster(addresses, chainId = 84532) {
+  const domain = portalNetworkProfile(chainId).identityDomain;
   return withArtifactHash({
     schemaVersion: 2,
     kind: "solslot-samuel-validator-roster",
-    domain: "solslot-alpha-warp-testnet11-base-sepolia",
+    domain,
     threshold: 2,
     validators: addresses.map((evmAddress, index) => ({
       schemaVersion: 2,
       kind: "solslot-samuel-validator-public-identity",
       validatorId: `validator-${index + 1}`,
-      domain: "solslot-alpha-warp-testnet11-base-sepolia",
+      domain,
       blsPublicKey: `0x${String(index + 1).padStart(2, "0").repeat(48)}`,
       evmAddress,
       proof: {},
@@ -61,7 +64,51 @@ async function codeHash(address) {
   return ethers.keccak256(await ethers.provider.getCode(address));
 }
 
-describe("pinned Base Sepolia Warp portal deployment", function () {
+// Exercise local mock contracts with an explicit RPC chain response; no public-chain calls.
+function providerOnChain(chainId) {
+  return new Proxy(ethers.provider, {
+    get(target, property) {
+      if (property === "getNetwork") return async () => ({ chainId: BigInt(chainId) });
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+describe("pinned Base bridge portal deployment", function () {
+  it("selects the matching Safe RPC and requires explicit Base mainnet test scope", function () {
+    const environment = {
+      SOLSLOT_WARP_TESTNET_DEPLOYMENT: "true",
+      SOLSLOT_CHIA_NETWORK: "testnet11",
+      SOLSLOT_BRIDGE_TEST_ONLY: "true",
+      BASE_MAINNET_RPC_URL: "https://base.example.invalid",
+      BASE_SEPOLIA_RPC_URL: "https://sepolia.example.invalid",
+    };
+    expect(portalDeploymentSettings(environment, "baseMainnet", 8453).rpcUrl)
+      .to.equal(environment.BASE_MAINNET_RPC_URL);
+    expect(portalDeploymentSettings(environment, "baseSepolia", 84532).rpcUrl)
+      .to.equal(environment.BASE_SEPOLIA_RPC_URL);
+    for (const change of [
+      { SOLSLOT_CHIA_NETWORK: "mainnet" },
+      { SOLSLOT_CHIA_NETWORK: undefined },
+      { SOLSLOT_BRIDGE_TEST_ONLY: "false" },
+      { SOLSLOT_BRIDGE_TEST_ONLY: true },
+    ]) {
+      expect(() => portalDeploymentSettings({ ...environment, ...change }, "baseMainnet", 8453))
+        .to.throw("explicit Testnet11 and test-only assets");
+    }
+    expect(() => portalDeploymentSettings({ ...environment, BASE_MAINNET_RPC_URL: undefined }, "baseMainnet", 8453))
+      .to.throw("BASE_MAINNET_RPC_URL is required");
+    expect(() => portalDeploymentSettings(environment, "baseSepolia", 8453))
+      .to.throw("selected Base network");
+    expect(() => portalDeploymentSettings({ ...environment, SOLSLOT_WARP_TESTNET_DEPLOYMENT: "false" }, "baseMainnet", 8453))
+      .to.throw("explicit test deployment");
+    for (const chain of [1, 11155111, "8453", undefined, null]) {
+      if (chain === undefined) continue; // An omitted reader chain retains the historical Sepolia default.
+      expect(() => portalNetworkProfile(chain)).to.throw("Unsupported");
+    }
+  });
+
   it("requires the exact hash-sealed 2-of-3 Samuel validator roster", async function () {
     const signers = await ethers.getSigners();
     const addresses = signers.slice(0, 3).map((signer) => signer.address);
@@ -79,7 +126,33 @@ describe("pinned Base Sepolia Warp portal deployment", function () {
     )).to.throw("must be unique");
   });
 
-  it("rechecks the live Safe, signer set, proxy slots, bytecode, and confirmed creations", async function () {
+  it("rejects a mixed or wrong network roster even when its outer hash is valid", async function () {
+    const signers = await ethers.getSigners();
+    const addresses = signers.slice(0, 3).map((signer) => signer.address);
+    const roster = validatorRoster(addresses, 8453);
+    const file = temporaryEvidence("base-roster-", roster);
+    expect(readWarpValidatorRoster(file, roster.artifactHash, 8453).addresses).to.deep.equal(addresses);
+    expect(() => readWarpValidatorRoster(file, roster.artifactHash))
+      .to.throw("not explicitly pinned");
+    const legacy = validatorRoster(addresses);
+    expect(() => readWarpValidatorRoster(temporaryEvidence("legacy-roster-", legacy), legacy.artifactHash, 8453))
+      .to.throw("not explicitly pinned");
+    const { artifactHash, ...body } = roster;
+    const mixed = structuredClone(body);
+    mixed.validators[1].domain = portalNetworkProfile(84532).identityDomain;
+    const mixedRecord = withArtifactHash(mixed);
+    expect(() => readWarpValidatorRoster(temporaryEvidence("mixed-roster-", mixedRecord), mixedRecord.artifactHash, 8453))
+      .to.throw("identity is malformed");
+    const duplicate = structuredClone(body);
+    duplicate.validators[1].blsPublicKey = duplicate.validators[0].blsPublicKey;
+    const duplicateRecord = withArtifactHash(duplicate);
+    expect(() => readWarpValidatorRoster(temporaryEvidence("duplicate-bls-", duplicateRecord), duplicateRecord.artifactHash, 8453))
+      .to.throw("BLS keys must be unique");
+  });
+
+  for (const chainId of [84532, 8453]) {
+  it(`rechecks the Safe, signer set, proxy slots, bytecode, and creations for chain ${chainId}`, async function () {
+    const profile = portalNetworkProfile(chainId);
     const signers = await ethers.getSigners();
     const owners = signers.slice(1, 4).map((signer) => signer.address);
     const safe = await ethers.deployContract("MockSafe", [owners, 2]);
@@ -107,13 +180,18 @@ describe("pinned Base Sepolia Warp portal deployment", function () {
     const proxyDeployment = await deploymentTransaction(portal);
     await network.provider.send("hardhat_mine", ["0xc"]);
 
-    const roster = validatorRoster(owners);
+    const roster = validatorRoster(owners, chainId);
     const evidence = withArtifactHash({
-      schemaVersion: 1,
-      kind: "solslot-warp-base-sepolia-portal-deployment",
+      schemaVersion: profile.schemaVersion,
+      kind: profile.kind,
       sourceSha: "a".repeat(40),
-      network: "baseSepolia",
-      chainId: 84532,
+      network: profile.network,
+      chainId,
+      ...(chainId === 8453 ? {
+        chiaNetwork: "testnet11",
+        testOnly: true,
+        validatorIdentityDomain: profile.identityDomain,
+      } : {}),
       confirmations: 12,
       validatorRosterArtifactHash: roster.artifactHash,
       warpSource: {
@@ -176,7 +254,8 @@ describe("pinned Base Sepolia Warp portal deployment", function () {
     const file = temporaryEvidence("warp-portal-", evidence);
     const input = {
       path: file,
-      provider: ethers.provider,
+      provider: providerOnChain(chainId),
+      expectedChainId: chainId,
       expectedPortal: portal.target,
       expectedOmnichainSourceSha: "a".repeat(40),
       expectedRosterArtifactHash: roster.artifactHash,
@@ -186,6 +265,25 @@ describe("pinned Base Sepolia Warp portal deployment", function () {
     expect((await validateWarpPortalEvidence(input)).artifactHash)
       .to.equal(evidence.artifactHash);
 
+    await expect(validateWarpPortalEvidence({ ...input, provider: providerOnChain(1) }))
+      .to.be.rejectedWith("RPC chain differs");
+    await expect(validateWarpPortalEvidence({ ...input, expectedChainId: chainId === 8453 ? 84532 : 8453 }))
+      .to.be.rejectedWith("evidence is unsupported");
+    if (chainId === 8453) {
+      const { artifactHash, ...body } = evidence;
+      for (const change of [
+        { testOnly: false }, { testOnly: "true" },
+        { chiaNetwork: "mainnet" }, { chiaNetwork: undefined },
+        { validatorIdentityDomain: portalNetworkProfile(84532).identityDomain },
+        { schemaVersion: 1 }, { network: "baseSepolia" },
+      ]) {
+        const changed = JSON.parse(JSON.stringify({ ...body, ...change }));
+        const invalid = withArtifactHash(changed);
+        await expect(validateWarpPortalEvidence({ ...input, path: temporaryEvidence("wrong-base-scope-", invalid) }))
+          .to.be.rejectedWith("evidence is unsupported");
+      }
+    }
+
     await network.provider.send("hardhat_setStorageAt", [
       portal.target,
       ADMIN_SLOT,
@@ -194,6 +292,7 @@ describe("pinned Base Sepolia Warp portal deployment", function () {
     await expect(validateWarpPortalEvidence(input))
       .to.be.rejectedWith("proxy slots do not match");
   });
+  }
 
   it("rejects an authority record that substitutes one validator", async function () {
     const signers = await ethers.getSigners();
@@ -240,7 +339,7 @@ describe("pinned Base Sepolia Warp portal deployment", function () {
     });
     await expect(validateWarpPortalEvidence({
       path: temporaryEvidence("warp-substitution-", evidence),
-      provider: ethers.provider,
+      provider: providerOnChain(84532),
       expectedPortal: signers[5].address,
       expectedOmnichainSourceSha: "a".repeat(40),
       expectedRosterArtifactHash: evidence.validatorRosterArtifactHash,

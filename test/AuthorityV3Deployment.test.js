@@ -247,6 +247,42 @@ async function governanceFixture(network = "baseSepolia", chainId = 84532) {
 }
 
 describe("Authority V3 deployment evidence", function () {
+  it("uses live Authority V3 validation for Base payments and rejects wrong RPC domains", async function () {
+    const { validatePaymentGovernance } = require('../scripts/lib/payment-governance');
+    const fixture = await governanceFixture('baseMainnet', 8453);
+    const file = writeTemporaryEvidence('payment-v3-',fixture.evidence);
+    const options = {path:file,provider:authorityProvider(8453),rootSafe:fixture.rootSafe.target,timelock:fixture.timelock.target};
+    expect((await validatePaymentGovernance(options)).artifactHash).to.equal(fixture.evidence.artifactHash);
+    await expect(validatePaymentGovernance({...options,provider:authorityProvider(84532)}))
+      .to.be.rejectedWith('selected RPC chain');
+  });
+  for (const chainId of [8453, 84532]) {
+    it(`binds a mixed-network roster to authority chain ${chainId}`, function () {
+      const roster = authorityRoster({ schemaVersion: 3, paymentChainId: chainId, evmChainId: 11155111 });
+      const file = writeTemporaryEvidence("authority-v3-mixed-", roster.evidence);
+      expect(readAuthorityV3Roster(file, chainId).authorityChainId).to.equal(chainId);
+      expect(() => readAuthorityV3Roster(file, chainId === 8453 ? 84532 : 8453))
+        .to.throw("selected deployment chain");
+    });
+  }
+
+  it("never infers Base mainnet from an unbound historical roster", function () {
+    const legacy = writeTemporaryEvidence("authority-v3-legacy-", authorityRoster().evidence);
+    expect(readAuthorityV3Roster(legacy, 84532).authorityChainId).to.equal(84532);
+    expect(() => readAuthorityV3Roster(legacy, 8453)).to.throw("selected deployment chain");
+    const hidden = authorityRoster({ paymentChainId: 8453 });
+    expect(() => readAuthorityV3Roster(writeTemporaryEvidence("authority-v3-hidden-", hidden.evidence), 8453))
+      .to.throw("Legacy Authority V3 roster");
+  });
+
+  for (const value of [true, "8453", null, 11155111]) {
+    it(`rejects malformed payment selection ${JSON.stringify(value)}`, function () {
+      const roster = authorityRoster({ schemaVersion: 3, paymentChainId: value, evmChainId: 11155111 });
+      expect(() => readAuthorityV3Roster(writeTemporaryEvidence("authority-v3-bad-chain-", roster.evidence), 8453))
+        .to.throw("selected deployment chain");
+    });
+  }
+
   it("accepts only drilled, separate recovery identities bound to daily keys", function () {
     const roster = authorityRoster();
     const parsed = readAuthorityV3Roster(

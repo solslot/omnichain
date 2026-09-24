@@ -1,0 +1,11 @@
+{
+  "package": "@safe-global/safe-contracts",
+  "version": "1.4.1",
+  "purpose": "Execute the real nested EIP-1271 checks in local tests. No SDK is imported.",
+  "tarballSha256": "8803f7cf26e2c58300b8136342faa7b8bce59436e300f52115fa25b095e0bf79",
+  "artifacts": {
+    "Safe.sol/Safe.json": "c36a5e99bc3f25c2d75ac5f7920b679200b3ce617c0d26e674b1321dbc6b0bdf",
+    "handler/CompatibilityFallbackHandler.sol/CompatibilityFallbackHandler.json": "cd4f07b0984afb35dc9699e911eff240b11599fd78e4be12be64b401e5fd57bb",
+    "proxies/SafeProxy.sol/SafeProxy.json": "b05eaeaf7278097e52a9e9b38410de2a812c23fa3622373473e73eaa19646ecd"
+  }
+}

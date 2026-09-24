@@ -5,7 +5,7 @@ const {
   withArtifactHash,
   writeEvidence,
 } = require("./lib/deployment-evidence");
-const { validateGovernanceEvidence } = require("./lib/governance-deployment");
+const { validatePaymentGovernance } = require("./lib/payment-governance");
 
 const GIT_SHA = /^[0-9a-f]{40}$/;
 
@@ -52,7 +52,7 @@ async function main() {
   }
   const timelockAddress = deployment.configuration.governanceTimelock;
   const rootSafeAddress = deployment.configuration.governanceRootSafe;
-  const governance = await validateGovernanceEvidence({
+  const governance = await validatePaymentGovernance({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
     rootSafe: rootSafeAddress,

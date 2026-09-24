@@ -5,7 +5,7 @@ const {
   withArtifactHash,
   writeEvidence,
 } = require("./lib/deployment-evidence");
-const { validateGovernanceEvidence } = require("./lib/governance-deployment");
+const { validatePaymentGovernance, paymentSigningSafes } = require("./lib/payment-governance");
 const { buildSafeAuthorityOperation } = require("./lib/safe-authority-operation");
 
 function toolSourceSha() {
@@ -100,7 +100,7 @@ async function main() {
     "ownership_activation_intent",
   );
   requireMatchingIntent(intent, deployment);
-  const governance = await validateGovernanceEvidence({
+  const governance = await validatePaymentGovernance({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
     rootSafe: deployment.configuration.governanceRootSafe,
@@ -135,13 +135,12 @@ async function main() {
     phase,
     rootSafeAddress: deployment.configuration.governanceRootSafe,
     rootTransaction: transaction,
-    ownerIdentitySafe: governance.safes.ownerIdentity,
-    coadminSafe: governance.safes.coadmin,
+    ...paymentSigningSafes(governance, Number(process.env.SOLSLOT_OWNERSHIP_COADMIN_SLOT)),
   });
   const operationTimestamp = await timelock.getTimestamp(intent.operationId);
   const latestBlock = await ethers.provider.getBlock("latest");
   const evidence = withArtifactHash({
-    schemaVersion: 1,
+    schemaVersion: governance.schemaVersion === 3 ? 2 : 1,
     kind: "solslot-safe-authority-operation",
     deploymentArtifactHash: deployment.artifactHash,
     ownershipIntentArtifactHash: intent.artifactHash,

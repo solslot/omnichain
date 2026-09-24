@@ -9,17 +9,15 @@ const {
 const {
   deploymentSettings,
   inspectDeploymentReadiness,
-  isTestnet,
+  requireTestAssetScope,
   requiredUint,
 } = require("./lib/deployment-preflight");
-const { validateGovernanceEvidence } = require("./lib/governance-deployment");
+const { validatePaymentGovernance } = require("./lib/payment-governance");
 const { validateSamuelCoordinates } = require("./lib/samuel-coordinates");
 const { validateWarpPortalEvidence } = require("./lib/warp-portal-deployment");
 
 async function main() {
-  if (!isTestnet(network.name) || process.env.SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT !== "true") {
-    throw new Error("preflight requires an explicit SOLSLOT_OMNICHAIN_TESTNET_DEPLOYMENT=true testnet run");
-  }
+  requireTestAssetScope(process.env, network.name);
   const sourceSha = requiredSourceSha();
   const config = currentNetworkConfig();
   await assertChain(config);
@@ -39,7 +37,7 @@ async function main() {
     deployer: await deployer.getAddress(),
     minimumDeployerBalanceWei,
   });
-  const governance = await validateGovernanceEvidence({
+  const governance = await validatePaymentGovernance({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
     rootSafe: settings.rootSafe,
@@ -52,6 +50,7 @@ async function main() {
       ...settings.gatewaySettings,
       predictedGatewayAddress: inspection.predictedGatewayAddress,
     },
+    config.chainId,
   );
   const warpPortal = await validateWarpPortalEvidence({
     path: process.env.SOLSLOT_WARP_PORTAL_EVIDENCE_PATH,
@@ -60,6 +59,7 @@ async function main() {
     expectedOmnichainSourceSha: sourceSha,
     expectedRosterArtifactHash: samuel.validatorRosterArtifactHash,
     expectedValidatorAddresses: samuel.validatorEvmAddresses,
+    expectedChainId: config.chainId,
     minimumConfirmations: settings.confirmations,
   });
   const evidence = withArtifactHash({

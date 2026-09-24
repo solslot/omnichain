@@ -5,11 +5,11 @@ const {
   writeEvidence,
 } = require("./lib/deployment-evidence");
 const {
-  encodeContractSignatures,
+  encodeAuthoritySignatures,
   safeTransactionArguments,
   validateAuthorityApprovalEvidence,
 } = require("./lib/safe-authority-operation");
-const { validateGovernanceEvidence } = require("./lib/governance-deployment");
+const { validatePaymentGovernance, validatePaymentApprovalTopology } = require("./lib/payment-governance");
 
 const SAFE_EXEC_ABI = [
   "function nonce() view returns (uint256)",
@@ -31,7 +31,7 @@ async function main() {
     "ownership_safe_approvals",
   );
   if (
-    packageEvidence.schemaVersion !== 1 ||
+    ![1, 2].includes(packageEvidence.schemaVersion) ||
     packageEvidence.kind !== "solslot-safe-authority-operation" ||
     packageEvidence.network !== network.name ||
     packageEvidence.chainId !== Number((await ethers.provider.getNetwork()).chainId)
@@ -61,7 +61,7 @@ async function main() {
   ) {
     throw new Error("Safe authority operation does not match the ownership intent");
   }
-  const governance = await validateGovernanceEvidence({
+  const governance = await validatePaymentGovernance({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
     rootSafe: packageEvidence.rootSafe,
@@ -85,16 +85,10 @@ async function main() {
   ) {
     throw new Error("root Safe transaction does not match the ownership intent");
   }
-  const expectedChildSafes = [
-    governance.safes.ownerIdentity.address,
-    governance.safes.coadmin.address,
-  ].map((address) => address.toLowerCase()).sort();
-  const observedChildSafes = operation.approvals
-    .map(({ safe }) => safe.toLowerCase())
-    .sort();
-  if (JSON.stringify(observedChildSafes) !== JSON.stringify(expectedChildSafes)) {
-    throw new Error("root Safe approval domains do not match governance evidence");
+  if (packageEvidence.schemaVersion !== (governance.schemaVersion === 3 ? 2 : 1)) {
+    throw new Error("Safe operation schema does not match governance version");
   }
+  validatePaymentApprovalTopology(governance, operation);
   const verifiedApprovals = validateAuthorityApprovalEvidence(packageEvidence, approvals);
   const rootSafe = new ethers.Contract(
     packageEvidence.rootSafe,
@@ -128,18 +122,16 @@ async function main() {
     throw new Error("ownership operation is not ready for execution");
   }
 
-  const contractSignatures = encodeContractSignatures(
-    verifiedApprovals.map(({ safe, signature }) => ({ owner: safe, signature })),
-  );
+  const contractSignatures = encodeAuthoritySignatures(verifiedApprovals);
   const executionArgs = [...transactionArgs.slice(0, 9), contractSignatures];
   if (!(await rootSafe.execTransaction.staticCall(...executionArgs))) {
     throw new Error("root Safe rejected the administrator approvals");
   }
-  const transaction = await rootSafe.execTransaction(...executionArgs);
   const confirmationCount = Number(process.env.SOLSLOT_OMNICHAIN_CONFIRMATIONS || "12");
   if (!Number.isSafeInteger(confirmationCount) || confirmationCount < 12) {
     throw new Error("SOLSLOT_OMNICHAIN_CONFIRMATIONS must be at least 12");
   }
+  const transaction = await rootSafe.execTransaction(...executionArgs);
   const receipt = await transaction.wait(confirmationCount);
   if (!receipt || receipt.status !== 1) throw new Error("root Safe operation failed");
 

@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const { ethers, artifacts, network } = require("hardhat");
 const { requiredSourceSha } = require("./lib/deployment-evidence");
-const { CONTRACT, readCanonical, validatePlan, runDeployment } = require("./lib/test-token-deployment");
+const { contractFor, readCanonical, validatePlan, runDeployment } = require("./lib/test-token-deployment");
 
 function required(key) { if (!process.env[key]) throw new Error(`${key} required`); return process.env[key]; }
 async function main() {
@@ -14,7 +14,7 @@ async function main() {
   if (new URL(urls[0]).hostname === new URL(urls[1]).hostname) throw new Error("two independent RPC hosts required");
   const providers = urls.map(url => new ethers.JsonRpcProvider(url));
   try {
-    const result = await runDeployment({plan, artifact: await artifacts.readArtifact(CONTRACT), providers,
+    const result = await runDeployment({plan, artifact: await artifacts.readArtifact(contractFor(plan)), providers,
       execute, journalDirectory: execute ? required("SOLSLOT_TEST_TOKEN_JOURNAL") : undefined,
       resubmitOriginal: process.env.SOLSLOT_TEST_TOKEN_RESUBMIT_ORIGINAL === "true",
       signerFactory: async () => {

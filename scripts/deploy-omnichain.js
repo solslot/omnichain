@@ -12,12 +12,13 @@ const {
 } = require("./lib/config");
 const {
   deploymentSettings,
+  requireTestAssetScope,
   inspectDeploymentReadiness,
   validatePreflightEvidence,
   requiredUint,
 } = require("./lib/deployment-preflight");
-const { validateGovernanceEvidence } = require("./lib/governance-deployment");
-const { validateSamuelCoordinates } = require("./lib/samuel-coordinates");
+const { validatePaymentGovernance } = require("./lib/payment-governance");
+const { validateSamuelCoordinates, selectedSamuelBase } = require("./lib/samuel-coordinates");
 const { validateWarpPortalEvidence } = require("./lib/warp-portal-deployment");
 
 async function verify(address, constructorArguments) {
@@ -46,6 +47,7 @@ async function confirmedCall(transaction, confirmations, label) {
 }
 
 async function main() {
+  requireTestAssetScope(process.env, network.name);
   const sourceSha = requiredSourceSha();
   const evidenceOutput = requireNewEvidencePath(
     process.env.SOLSLOT_OMNICHAIN_DEPLOYMENT_OUTPUT,
@@ -61,7 +63,7 @@ async function main() {
     settings,
     deployer: await deployer.getAddress(),
   });
-  const governanceEvidence = await validateGovernanceEvidence({
+  const governanceEvidence = await validatePaymentGovernance({
     path: process.env.SOLSLOT_GOVERNANCE_EVIDENCE_PATH,
     provider: ethers.provider,
     rootSafe: settings.rootSafe,
@@ -74,6 +76,7 @@ async function main() {
       ...settings.gatewaySettings,
       predictedGatewayAddress: inspection.predictedGatewayAddress,
     },
+    config.chainId,
   );
   const warpPortalEvidence = await validateWarpPortalEvidence({
     path: process.env.SOLSLOT_WARP_PORTAL_EVIDENCE_PATH,
@@ -82,6 +85,7 @@ async function main() {
     expectedOmnichainSourceSha: sourceSha,
     expectedRosterArtifactHash: samuelEvidence.validatorRosterArtifactHash,
     expectedValidatorAddresses: samuelEvidence.validatorEvmAddresses,
+    expectedChainId: config.chainId,
     minimumConfirmations: settings.confirmations,
   });
   const preflight = validatePreflightEvidence({
@@ -144,7 +148,7 @@ async function main() {
       ethers.getAddress(gatewayAddress) !==
       ethers.getAddress(inspection.predictedGatewayAddress) ||
       ethers.getAddress(gatewayAddress) !==
-      ethers.getAddress(samuelEvidence.baseSepolia.solomonGatewayAddress)
+      ethers.getAddress(selectedSamuelBase(samuelEvidence, config.chainId).solomonGatewayAddress)
     ) {
       throw new Error(
         "deployed gateway address does not match Samuel coordinate evidence",
