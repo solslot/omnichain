@@ -23,7 +23,7 @@ async function portalSpec({rpcUrl, rosterPath, rosterHash, sourceRoot, deployer,
   const setup = new ethers.Interface(["function setup(address[],uint256,address,bytes,address,address,uint256,address)"])
     .encodeFunctionData("setup", [addresses, 2, ethers.ZeroAddress, "0x", dependencies[2].address, ethers.ZeroAddress, 0, ethers.ZeroAddress]);
   const factoryInterface = new ethers.Interface(["function createProxyWithNonce(address,bytes,uint256)", "function proxyCreationCode() view returns (bytes)"]);
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, {batchMaxCount: 1});
   let creationCode;
   try {
     check(ethers.keccak256(await provider.getCode(dependencies[0].address)) === dependencies[0].runtimeCodeHash, "Safe factory runtime differs");

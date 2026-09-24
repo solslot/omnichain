@@ -9,7 +9,7 @@ const required = name => { if (!process.env[name]) throw new Error(`${name} requ
 async function main() {
   const urls = [required("BASE_MAINNET_RPC_URL"), required("BASE_MAINNET_SECONDARY_RPC_URL")];
   if (new URL(urls[0]).hostname === new URL(urls[1]).hostname) throw new Error("independent RPC hosts required");
-  const providers = urls.map(url => new ethers.JsonRpcProvider(url));
+  const providers = urls.map(url => new ethers.JsonRpcProvider(url, undefined, {batchMaxCount: 1}));
   try {
     const block = await boundary(providers);
     const deployer = ethers.getAddress(required("SOLSLOT_DEPLOYER_ADDRESS")).toLowerCase();

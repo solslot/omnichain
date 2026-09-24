@@ -58,7 +58,7 @@ async function main() {
   if (execute && required("SOLSLOT_ACTION_ENVELOPE_ID") !== plan.actionEnvelopeId) throw new Error("ActionEnvelope differs");
   const urls = [required("BASE_MAINNET_RPC_URL"), required("BASE_MAINNET_SECONDARY_RPC_URL")];
   if (new URL(urls[0]).hostname === new URL(urls[1]).hostname) throw new Error("independent RPC hosts required");
-  const providers = urls.map(url => new ethers.JsonRpcProvider(url));
+  const providers = urls.map(url => new ethers.JsonRpcProvider(url, undefined, {batchMaxCount: 1}));
   try {
     const spec = await portalSpec({rpcUrl: urls[0], sourceRoot: required("SOLSLOT_WARP_SOURCE_ROOT"),
       rosterPath: required("SOLSLOT_WARP_VALIDATOR_ROSTER_PATH"), rosterHash: plan.binding.rosterHash,
