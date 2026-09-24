@@ -5,6 +5,7 @@ node_modules/
 # Hardhat build artifacts and cache
 artifacts/
 cache/
+edr-cache/
 **/artifacts/
 **/cache/
 typechain/
