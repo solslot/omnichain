@@ -42,7 +42,7 @@ function readSafeOwnerRoster(path) {
 }
 
 function safeSaltNonce(roster, label) {
-  if (!ethers.isHexString(roster.artifactHash, 32) || !/^[a-z_]{3,32}$/.test(label)) {
+  if (!ethers.isHexString(roster.artifactHash, 32) || !/^[a-z][a-z0-9_]{2,31}$/.test(label)) {
     throw new Error("Safe salt inputs are invalid");
   }
   return BigInt(ethers.keccak256(ethers.solidityPacked(

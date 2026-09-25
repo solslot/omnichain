@@ -1,0 +1,11 @@
+{
+  "package": "@safe-global/safe-contracts",
+  "version": "1.4.1",
+  "tarballSha256": "8803f7cf26e2c58300b8136342faa7b8bce59436e300f52115fa25b095e0bf79",
+  "purpose": "Rehearse complete bounded Authority V3 sequence against the official Safe contracts offline",
+  "artifacts": {
+    "SafeL2.sol/SafeL2.json": "a57d54c0d757ca7fb86693480797de69c880878690b67061f6f9624e11def8bd",
+    "proxies/SafeProxyFactory.sol/SafeProxyFactory.json": "f77ccb60e95345e6583216e82feb5430098679d62aa4aeda7388df3831476997",
+    "libraries/SignMessageLib.sol/SignMessageLib.json": "a94c1a3406b0cf5d7006fdac7628f8db600e18420c6e04ae3c89cac85e1be88c"
+  }
+}

@@ -126,4 +126,28 @@ describe("Bounded Base deployment sequence recovery", function () {
     expect(() => validatePlan(seal({...body, totalBudgetWei: "1"}))).to.throw("budget");
     expect(() => validatePlan(seal({...body, testOnly: false}))).to.throw("scope");
   });
+  it("checks v2 binding calls at the canonical receipt block before advancing", async function () {
+    const {planHash, ...body} = plan;
+    const condition = {to: signer.address, data: '0x12345678', result: ethers.ZeroHash};
+    plan = seal({...body, schema: 'solslot.bounded-base-deployment.v2', transactions: body.transactions.map(t => ({...t, postconditions: [condition]}))});
+    let checkedBlock;
+    for (const p of providers) p.call = async req => { checkedBlock = req.blockTag; return ethers.ZeroHash; };
+    await run({execute: true}); mine(0);
+    providers[1].call = async () => ethers.id('wrong binding');
+    await expect(run({execute: true})).to.be.rejectedWith('postcondition differs');
+    expect(state.broadcasts).to.have.length(1);
+    providers[1].call = providers[0].call;
+    expect((await run({execute: true})).name).to.equal('operation1');
+    expect(checkedBlock).to.equal(81);
+    expect(keyReads).to.equal(1);
+  });
+  it("allows no-creation calls only with v2 postconditions", function () {
+    const {planHash, ...body} = plan;
+    const transactions = body.transactions.map(t => ({...t, to: signer.address, created: []}));
+    expect(() => validatePlan(seal({...body, transactions}))).to.throw('created contract');
+    expect(() => validatePlan(seal({...body, schema: 'solslot.bounded-base-deployment.v2',
+      transactions: transactions.map(t => ({...t, postconditions: []}))}))).to.throw('postconditions');
+    expect(() => validatePlan(seal({...body, schema: 'solslot.bounded-base-deployment.v2',
+      transactions: transactions.map(t => ({...t, postconditions: [{to: signer.address, data: '0x12345678', result: ethers.ZeroHash}]}))}))).not.to.throw();
+  });
 });

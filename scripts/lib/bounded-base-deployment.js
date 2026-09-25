@@ -22,7 +22,8 @@ function validatePlan(plan) {
     "startNonce", "binding", "dependencies", "transactions", "totalBudgetWei", "planHash"], "plan");
   const {planHash, ...body} = plan;
   check(planHash === sha256(body), "plan hash differs");
-  check(plan.schema === "solslot.bounded-base-deployment.v1" && plan.chainId === 8453 &&
+  const withPostconditions = plan.schema === "solslot.bounded-base-deployment.v2";
+  check((withPostconditions || plan.schema === "solslot.bounded-base-deployment.v1") && plan.chainId === 8453 &&
     plan.chiaNetwork === "testnet11" && plan.testOnly === true, "explicit Base/Testnet11 scope required");
   check(/^[0-9a-f]{40}$/.test(plan.sourceSha) && plan.sourceSha !== "0".repeat(40), "source SHA required");
   check(/^AE-SOLSLOT-[A-Z0-9-]{1,128}$/.test(plan.actionEnvelopeId), "ActionEnvelope required");
@@ -36,14 +37,26 @@ function validatePlan(plan) {
   }
   let total = 0n;
   for (const [index, tx] of plan.transactions.entries()) {
-    exact(tx, ["name", "nonce", "to", "data", "gasLimit", "maxFeePerGas", "maxPriorityFeePerGas", "auxiliaryFeeBudgetWei", "created"], "transaction");
+    exact(tx, ["name", "nonce", "to", "data", "gasLimit", "maxFeePerGas", "maxPriorityFeePerGas", "auxiliaryFeeBudgetWei", "created",
+      ...(withPostconditions ? ["postconditions"] : [])], "transaction");
     check(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/.test(tx.name) && tx.nonce === plan.startNonce + index, "invalid transaction order");
     check(tx.to === null || ethers.isAddress(tx.to), "invalid target");
     check(ethers.isHexString(tx.data) && ethers.dataLength(tx.data) > 0 && ethers.dataLength(tx.data) <= 100000, "invalid calldata");
     for (const k of ["gasLimit", "maxFeePerGas", "maxPriorityFeePerGas", "auxiliaryFeeBudgetWei"])
       check(typeof tx[k] === "string" && /^[1-9][0-9]{0,24}$/.test(tx[k]), `invalid ${k}`);
     check(BigInt(tx.gasLimit) <= 30000000n && BigInt(tx.maxPriorityFeePerGas) <= BigInt(tx.maxFeePerGas), "invalid gas bounds");
-    check(Array.isArray(tx.created) && tx.created.length > 0 && tx.created.length <= 16, "created contract checks required");
+    check(Array.isArray(tx.created) && tx.created.length <= 16 &&
+      (tx.created.length > 0 || (withPostconditions && tx.to !== null)), "created contract checks required");
+    if (withPostconditions) {
+      check(Array.isArray(tx.postconditions) && tx.postconditions.length > 0 && tx.postconditions.length <= 32, "postconditions required");
+      for (const condition of tx.postconditions) {
+        exact(condition, ["to", "data", "result"], "postcondition");
+        check(ethers.isAddress(condition.to) && ethers.isHexString(condition.data) &&
+          ethers.dataLength(condition.data) >= 4 && ethers.dataLength(condition.data) <= 4096 &&
+          ethers.isHexString(condition.result) && ethers.dataLength(condition.result) > 0 &&
+          ethers.dataLength(condition.result) <= 8192, "invalid postcondition");
+      }
+    }
     for (const created of tx.created) {
       exact(created, ["address", "runtimeCodeHash"], "created contract");
       check(ethers.isAddress(created.address) && ethers.isHexString(created.runtimeCodeHash, 32) &&
@@ -106,6 +119,13 @@ async function inspectMined(plan, index, hash, providers) {
     if (request.to === null) check(r.contractAddress?.toLowerCase() === plan.transactions[index].created[0].address.toLowerCase(), "receipt contract differs");
     for (const c of plan.transactions[index].created)
       check(ethers.keccak256(await p.getCode(c.address)) === c.runtimeCodeHash, "deployed runtime differs");
+    // Historical state matters on resume: a later reviewed binding may have
+    // legitimately changed an earlier step's initial state. Use the canonical
+    // receipt block, never an unpinned latest-state read.
+    for (const condition of plan.transactions[index].postconditions || []) {
+      const result = await p.call({to: condition.to, data: condition.data, blockTag: r.blockNumber});
+      check(result.toLowerCase() === condition.result.toLowerCase(), "deployment postcondition differs");
+    }
   }
   const confirmations = block.number - receipts[0].blockNumber + 1;
   return {status: confirmations >= 12 ? "confirmed" : "confirming", name: plan.transactions[index].name,
