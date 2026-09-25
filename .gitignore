@@ -69,3 +69,8 @@ coverage.json
 # Environment/direnv helpers
 .envrc
 .direnv/
+
+# Read-only Python deployment helpers and their regression tests
+__pycache__/
+*.py[cod]
+.pytest_cache/
