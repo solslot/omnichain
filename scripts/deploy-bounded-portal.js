@@ -97,4 +97,4 @@ if (require.main === module) main().catch(() => {
   console.error("Portal deployment stopped. The original plan and signed journal are preserved. Reconcile before retrying; no replacement transaction was created.");
   process.exitCode = 1;
 });
-module.exports = {deploymentEvidence};
+module.exports = {deploymentEvidence, loadSigner};

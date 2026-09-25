@@ -34,5 +34,33 @@ Before preparing the bounded deployment plan:
 `test/native-asset-deployment.test.js` exercises an actual local deployment and
 checks constructor substitution, wrong networks, incomplete confirmations,
 amount limits, and accidental activation. Local fixtures are not chain evidence.
-The deployment CLI/fork orchestration and hosted acceptance remain integration
-work; this library alone is not a deployable release or a readiness claim.
+`prepare-native-assets.js` runs these checks, derives the routes in a clean pinned
+Samuel checkout, and rehearses the constructor on a canonical Base fork. The
+Python derivation helper reconstructs the portal from its launcher on the
+authenticated Chia node and Coinset. Both must still observe the confirmed,
+unused initial portal with the reviewed two-of-three authority.
+
+`deploy-native-assets.js` repeats the dependency checks and route derivation,
+then uses the bounded sequence journal. It accepts only one constructor and no
+activation transaction. After twelve confirmations on two independent Base RPC
+hosts, it verifies every escrow binding and writes a new deployment receipt.
+Hosted round trips and route activation remain separate acceptance work.
+
+Set `BASE_MAINNET_RPC_URL`, `BASE_MAINNET_SECONDARY_RPC_URL`,
+`SOLSLOT_OMNICHAIN_SOURCE_SHA`, `SOLSLOT_DEPLOYER_ADDRESS`,
+`SOLSLOT_ACTION_ENVELOPE_ID`, `SOLSLOT_ASSET_INPUTS`,
+`SOLSLOT_ASSET_INPUTS_SHA256`, `SOLSLOT_ASSET_PLAN`, and
+`SOLSLOT_ASSET_REHEARSAL` for preparation. The inputs JSON contains the portal
+artifact paths and hashes, original portal source SHA, roster hash and three EVM
+validators, ordered TEST-USDC/TEST-USDT evidence paths, Samuel root and source
+SHA, isolated Python executable, Chia RPC root and localhost port, transfer and
+outstanding caps in CAT mojos, and maximum message toll in wei.
+
+For execution add `SOLSLOT_ASSET_PLAN_SHA256`,
+`SOLSLOT_ASSET_EXECUTE=approved`, `SOLSLOT_ASSET_JOURNAL`,
+`SOLSLOT_ASSET_DEPLOYMENT_OUTPUT`, `SOLSLOT_DEPLOYER_KEYSTORE_PATH`, and the
+dedicated `SOLSLOT_KEYSTORE_PASSPHRASE_FD`. File SHA256 values are plain
+hexadecimal hashes of exact file bytes. A missing response preserves the original
+signed transaction; explicit `SOLSLOT_ASSET_RESUBMIT_ORIGINAL=true` can resend
+only those saved bytes after reconciliation. It cannot replace a nonce or raise
+the signed fee cap.
