@@ -8,6 +8,7 @@ const {readAuthorityV3Roster, validateAuthorityV3GovernanceEvidence} = require('
 const {authorityDependencies, authoritySpec, verifyAuthorityPlan} = require('../scripts/lib/bounded-authority-plan');
 const {rehearseAuthority} = require('../scripts/prepare-bounded-authority');
 const {safeSaltNonce} = require('../scripts/lib/governance-deployment');
+const {readCanonical, writeOnce} = require('../scripts/lib/test-token-deployment');
 
 function baseView() {
   return new Proxy(ethers.provider, {get(target, property) {
@@ -63,6 +64,9 @@ describe('Bounded Authority V3 deployment', function () {
       startNonce: await signer.getNonce(), sourceSha: 'a'.repeat(40), actionEnvelopeId: 'AE-SOLSLOT-AUTHORITY-TEST',
       publicBlock: {baseFeePerGas: 2000000n}, auxiliaryFee: async () => 1000n});
     expect(result.completed).to.have.length(19);
+    const planPath = path.join(directory, 'plan.json');
+    writeOnce(planPath, result.plan);
+    expect(readCanonical(planPath)).to.deep.equal(result.plan);
     const evidencePath = path.join(directory, 'rehearsal.json'); writeEvidence(evidencePath, result.evidence);
     await validateAuthorityV3GovernanceEvidence({path: evidencePath, provider, rootSafe: spec.binding.root, timelock: spec.binding.timelock});
     const altered = structuredClone(result.plan);
