@@ -8,7 +8,7 @@ const {
 const AUTHORIZATION_SCHEMA = "solslot.base-voucher-settlement-authorization.v2";
 const DIRECT_AUTHORIZATION_SCHEMA = "solslot.base-direct-settlement-authorization.v1";
 const GATEWAY_ABI = [
-  "function getRequest(bytes32 globalPaymentId) view returns (((uint64 originChainSelector,address originSpoke,bytes32 globalPaymentId,bytes32 purchaseId,bytes32 artifactHash,uint256 amount,uint256 quantity,bytes32 collectionId,bytes32 deedLauncherId,bytes32 vaultLauncherId,bytes32 destinationPuzzle,uint64 hubChainSelector,address hubGateway,uint64 quoteExpiresAt) request,bytes32 inboundMessageId,bytes32 outboundMessageId,bytes32 warpNonce,uint64 queuedAt,uint8 status,bool succeeded))",
+  "function getRequest(bytes32 globalPaymentId) view returns (((uint64 originChainSelector,address originSpoke,address depositor,address settlementToken,bytes32 localPaymentId,bytes32 globalPaymentId,bytes32 purchaseId,bytes32 artifactHash,bytes32 collectionId,bytes32 deedLauncherId,bytes32 vaultLauncherId,bytes32 destinationPuzzle,uint256 amount,uint256 quantity,uint64 quoteExpiresAt,uint64 hubChainSelector,address hubGateway) request,bytes32 inboundMessageId,bytes32 outboundMessageId,bytes32 warpNonce,uint64 queuedAt,uint8 status,bool succeeded))",
   "function forwardResult(bytes32 globalPaymentId) returns (bytes32 messageId)",
 ];
 const MAX_RESPONSE_BYTES = 128 * 1024;
@@ -145,7 +145,7 @@ async function pendingAuthorizations(config, fetchImplementation = fetch) {
   return authorizations;
 }
 
-function validateAuthorization(envelope, activation, deposit) {
+function validateAuthorization(envelope, activation, deposit, globalPaymentId = deposit.globalPaymentId) {
   exactKeys(
     envelope,
     [
@@ -220,7 +220,7 @@ function validateAuthorization(envelope, activation, deposit) {
     throw new Error("settlement authorization hash changed");
   }
   const bindings = direct ? [
-    ["globalPaymentId", deposit.globalPaymentId],
+    ["globalPaymentId", globalPaymentId],
     ["purchaseId", deposit.purchaseId],
     ["purchaseArtifactHash", deposit.artifactHash],
     ["deliveryContextHash", deposit.collectionId],
@@ -228,7 +228,7 @@ function validateAuthorization(envelope, activation, deposit) {
     ["vaultLauncherId", deposit.vaultLauncherId],
     ["vaultP2PuzzleHash", deposit.destinationPuzzle],
   ] : [
-    ["globalPaymentId", deposit.globalPaymentId],
+    ["globalPaymentId", globalPaymentId],
     ["purchaseId", deposit.purchaseId],
     ["purchaseArtifactHash", deposit.artifactHash],
     ["collectionId", deposit.collectionId],
@@ -510,11 +510,11 @@ async function settleAuthorization(
   );
   const globalPaymentId = envelope.authorization.globalPaymentId;
   let deposit = await spoke.getDeposit(globalPaymentId);
-  const normalizedDeposit = { ...deposit, globalPaymentId };
   const validated = validateAuthorization(
     envelope,
     config.activation,
-    normalizedDeposit,
+    deposit,
+    globalPaymentId,
   );
   let gatewayRecord = await gateway.getRequest(globalPaymentId);
   validateGatewayRequest(validated.authorization, gatewayRecord, validated.succeeded);

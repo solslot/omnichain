@@ -94,6 +94,30 @@ function fixture() {
 }
 
 describe("Base settlement authorization relayer", function () {
+  it("decodes the same gateway return fields as the compiled contract", async function () {
+    const { artifacts } = require("hardhat");
+    const compiled = new ethers.Interface((await artifacts.readArtifact("SolomonWarpGateway")).abi);
+    const relayer = new ethers.Interface(GATEWAY_ABI);
+    const output = (iface) => iface.getFunction("getRequest").outputs[0].format("full");
+    expect(output(relayer)).to.equal(output(compiled));
+  });
+
+  it("validates a deposit returned by the escrow contract decoder", function () {
+    const { envelope, activation, deposit } = fixture();
+    const abi = new ethers.Interface(PAYMENT_DEPOSITED_ABI);
+    const tuple = abi.getFunction("getDeposit").outputs[0];
+    const fields = tuple.components.map(({ name, type }) => {
+      if (deposit[name] !== undefined) return deposit[name];
+      if (type === "bytes32") return ethers.ZeroHash;
+      if (type === "address") return activation.contracts.gateway;
+      return 1n;
+    });
+    const bytes = abi.encodeFunctionResult("getDeposit", [fields]);
+    const [onChainDeposit] = abi.decodeFunctionResult("getDeposit", bytes);
+    expect(validateAuthorization(envelope, activation, onChainDeposit, deposit.globalPaymentId).succeeded).to.equal(true);
+    expect(() => validateAuthorization(envelope, activation, onChainDeposit, hex("77", 32))).to.throw("globalPaymentId");
+  });
+
   it("polls voucher and direct queues without merging their schemas", async function () {
     const voucher = fixture().envelope;
     const direct = { ...voucher, authorizationId: hex("51", 32) };
